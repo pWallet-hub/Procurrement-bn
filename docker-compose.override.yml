@@ -1,0 +1,11 @@
+# Local development only (docker compose loads this file automatically; Coolify uses docker-compose.yml alone).
+# Publishes ports on 127.0.0.1 so you can reach the services from your machine.
+services:
+  postgres:
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+  storage:
+    ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
+  mailpit:
+    ports: ["127.0.0.1:${MAILPIT_PORT:-8025}:8025"]
+  api:
+    ports: ["${API_PORT:-3000}:3000"]

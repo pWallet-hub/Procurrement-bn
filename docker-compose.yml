@@ -1,15 +1,48 @@
-# Backend stack: API + worker + PostgreSQL + Redis + SeaweedFS (S3 files) + Mailpit (dev mail catcher).
-# Runs on its own: `docker compose up -d --build` in this folder.
-# Start:  docker compose up --build        API: http://localhost:3000/api/v1/health
+# Backend stack: API + worker + PostgreSQL + Redis + SeaweedFS (S3 files) + Mailpit.
+#
+# Self-contained: every setting comes from environment variables with a safe local default, so it works
+#   - locally:  docker compose up -d --build      (reads .env; docker-compose.override.yml publishes dev ports)
+#   - Coolify:  Docker Compose build pack, base file docker-compose.yml, set the variables in the Coolify UI
+#               (see DEPLOY.md). No ports are published here: Coolify's proxy routes the domain you give the `api` service (port 3000).
+x-app-env: &app-env
+  NODE_ENV: ${NODE_ENV:-development}
+  PORT: "3000"
+  APP_URL: ${APP_URL:-http://localhost:8080}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+  DATABASE_URL: postgres://afs:${POSTGRES_PASSWORD:-afs_dev_password}@postgres:5432/afs
+  REDIS_URL: redis://redis:6379
+  JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh}
+  ACCESS_TTL_SECONDS: ${ACCESS_TTL_SECONDS:-900}
+  REFRESH_TTL_DAYS: ${REFRESH_TTL_DAYS:-7}
+  TOTP_REQUIRED: ${TOTP_REQUIRED:-false}
+  STORAGE_DRIVER: s3
+  S3_ENDPOINT: http://storage:8333
+  S3_REGION: us-east-1
+  S3_BUCKET: ${S3_BUCKET:-afs-files}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-afsstorage}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-afsstorage_dev_secret}
+  MAIL_FROM: ${MAIL_FROM:-AfS Procurement <procurement@afs.local>}
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASS: ${SMTP_PASS:-}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SEED_ON_START: ${SEED_ON_START:-true}
+  SEED_PASSWORD: ${SEED_PASSWORD:-Passw0rd!dev}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@afs.local}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Passw0rd!dev}
+  ADMIN_NAME: ${ADMIN_NAME:-System Administrator}
+  ADMIN_FORCE_RESET: ${ADMIN_FORCE_RESET:-false}
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: afs
-      POSTGRES_PASSWORD: afs_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-afs_dev_password}
       POSTGRES_DB: afs
     volumes: [pgdata:/var/lib/postgresql/data]
-    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]   # dev only; remove in production
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U afs -d afs"]
       interval: 5s
@@ -26,46 +59,56 @@ services:
       timeout: 3s
       retries: 20
 
-  # S3 compatible object store (SeaweedFS, Apache-2.0, actively maintained). Replaces MinIO.
+  # S3 compatible object store (SeaweedFS, Apache-2.0, actively maintained). The S3 key pair comes from the
+  # variables, so no credentials file has to be mounted.
   storage:
     image: chrislusf/seaweedfs:latest
-    command: ["server", "-dir=/data", "-filer", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-ip.bind=0.0.0.0"]
-    volumes:
-      - storagedata:/data
-      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro   # dev credentials; use your own keys in production
-    ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '{"identities":[{"name":"afs","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'
+        "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json &&
+        exec weed server -dir=/data -filer -s3 -s3.config=/tmp/s3.json -ip.bind=0.0.0.0
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-afsstorage}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-afsstorage_dev_secret}
+    volumes: [storagedata:/data]
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9333/cluster/status || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 30
 
+  # Catches all outgoing e-mail so you can read invites and signing links (UI on port 8025).
+  # For real e-mail set SMTP_* (e.g. Google Workspace relay); the container can then be left unused.
   mailpit:
     image: axllent/mailpit:latest
-    ports: ["127.0.0.1:${MAILPIT_PORT:-8025}:8025"]   # inbox UI; SMTP on 1025 inside the network
+    expose: ["8025"]
 
   api:
     build: .
-    env_file: [.env]
     environment:
+      <<: *app-env
       ROLE: api
+    expose: ["3000"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       storage: { condition: service_healthy }
-    ports: ["${API_PORT:-3000}:3000"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 20
+      start_period: 20s
 
   worker:
     build: .
     command: ["node", "dist/worker.js"]
-    env_file: [.env]
+    environment:
+      <<: *app-env
     depends_on:
-      api: { condition: service_healthy }   # api runs migrations first
+      api: { condition: service_healthy }   # api runs migrations and the seed first
 
 volumes:
   pgdata:

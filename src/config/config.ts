@@ -45,3 +45,14 @@ export const config = {
   inviteHours: 72,
   reminderDays: 2,
 };
+
+/** In production the placeholder secrets from the dev defaults must never be used. */
+if (config.isProd) {
+  const weak = (name: string, v: string) => (v.length < 24 || /change-me|dev_secret|dev_password|dev-/.test(v) ? name : null);
+  const bad = [
+    weak('JWT_ACCESS_SECRET', config.jwtAccessSecret), weak('JWT_REFRESH_SECRET', config.jwtRefreshSecret),
+    weak('S3_SECRET_KEY', config.storage.secretKey),
+    /dev_password/.test(config.databaseUrl) ? 'POSTGRES_PASSWORD' : null,
+  ].filter(Boolean);
+  if (bad.length) throw new Error(`Refusing to start in production with weak or default secrets: ${bad.join(', ')} (use random values of 24+ characters)`);
+}
