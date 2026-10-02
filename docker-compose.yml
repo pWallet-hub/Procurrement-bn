@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: afs_dev_password
       POSTGRES_DB: afs
     volumes: [pgdata:/var/lib/postgresql/data]
-    ports: ["5432:5432"]          # dev only; remove in production
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]   # dev only; remove in production
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U afs -d afs"]
       interval: 5s
@@ -32,7 +32,7 @@ services:
       MINIO_ROOT_USER: afsminio
       MINIO_ROOT_PASSWORD: afsminio_dev_secret
     volumes: [miniodata:/data]
-    ports: ["9000:9000", "9001:9001"]   # 9001 = console
+    ports: ["127.0.0.1:${MINIO_PORT:-9000}:9000", "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"]   # second = console
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -41,7 +41,7 @@ services:
 
   mailpit:
     image: axllent/mailpit:latest
-    ports: ["8025:8025"]           # inbox UI; SMTP on 1025 inside the network
+    ports: ["127.0.0.1:${MAILPIT_PORT:-8025}:8025"]   # inbox UI; SMTP on 1025 inside the network
 
   api:
     build: .
@@ -52,7 +52,7 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       minio: { condition: service_healthy }
-    ports: ["3000:3000"]
+    ports: ["${API_PORT:-3000}:3000"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

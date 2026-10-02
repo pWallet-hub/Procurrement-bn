@@ -25,6 +25,7 @@
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^6.9.14",
     "otplib": "^12.0.1",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.15.0",
     "pg": "^8.12.0",
     "qrcode": "^1.5.4",

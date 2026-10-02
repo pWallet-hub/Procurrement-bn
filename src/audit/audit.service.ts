@@ -31,6 +31,11 @@ export class AuditService {
     );
   }
 
+  async forObject(objectId: string) {
+    const r = await this.db.query(`${AUDIT_SELECT} WHERE e.object_id = $1 ORDER BY e.id DESC LIMIT 300`, [objectId]);
+    return r.rows.map(auditDto);
+  }
+
   /** Recompute the whole chain. Returns the id of the first broken row, or null when intact. */
   async verifyChain(q: Queryable = this.db): Promise<{ ok: boolean; failing_id?: number; checked: number }> {
     const { rows } = await q.query('SELECT * FROM audit_events ORDER BY id');
@@ -46,3 +51,7 @@ export class AuditService {
     return { ok: true, checked: rows.length };
   }
 }
+
+export const AUDIT_SELECT = `SELECT e.id, e.at, e.action, e.object_type, e.object_id, e.case_id, e.detail, u.id AS uid, u.full_name
+  FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id`;
+export const auditDto = (e: any) => ({ id: Number(e.id), at: e.at, actor: e.uid ? { id: e.uid, full_name: e.full_name } : null, action: e.action, object_type: e.object_type, object_id: e.object_id, case_id: e.case_id, detail: e.detail });

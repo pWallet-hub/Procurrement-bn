@@ -20,9 +20,10 @@ export class NotificationsService {
     let email = i.email ?? null;
     if (!email && i.userId) email = (await q.query('SELECT email FROM users WHERE id = $1', [i.userId])).rows[0]?.email ?? null;
     const vars = { ...(i.vars ?? {}), link: i.vars?.link ?? `${config.appUrl}${i.path ?? '/'}` };
+    const docId = /^\/documents\/([0-9a-f-]{36})/.exec(i.path ?? '')?.[1] ?? null;
     const r = await q.query(
       `INSERT INTO notifications (user_id, email, kind, payload, channel, status) VALUES ($1,$2,$3,$4,'email','queued') RETURNING id`,
-      [i.userId ?? null, email, i.kind, JSON.stringify({ subject: i.subject, vars, in_app: i.inApp !== false })],
+      [i.userId ?? null, email, i.kind, JSON.stringify({ subject: i.subject, title: i.subject, message: i.subject, document_id: docId, path: i.path ?? null, vars, in_app: i.inApp !== false })],
     );
     const id = r.rows[0].id as string;
     if (q === (this.db as Queryable)) await this.queue.add('email', { notificationId: id }, { jobId: `email-${id}` });
