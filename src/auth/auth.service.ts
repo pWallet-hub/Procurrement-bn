@@ -120,5 +120,16 @@ export class AuthService {
     return { ok: true };
   }
 
+  async changePassword(user: AuthUser, current: string, next: string, ip: string | null) {
+    if (!next || next.length < 10) throw badRequest('auth.weak_password', 'New password must be at least 10 characters', { new_password: 'at least 10 characters' });
+    const row = await this.db.one('SELECT password_hash FROM users WHERE id = $1', [user.id]);
+    if (!row?.password_hash || !(await argon2.verify(row.password_hash, current ?? ''))) throw new AppError(400, 'auth.invalid_credentials', 'Current password is wrong', { current_password: 'wrong password' });
+    if (current === next) throw badRequest('auth.same_password', 'Choose a different password', { new_password: 'must differ from the current one' });
+    await this.db.query('UPDATE users SET password_hash = $2 WHERE id = $1', [user.id, await this.hashPassword(next)]);
+    await this.db.query('UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [user.id]); // sign out other sessions
+    await this.audit.log({ actorId: user.id, ip, action: 'auth.password_changed', objectType: 'user', objectId: user.id });
+    return { ok: true };
+  }
+
   hashPassword(p: string) { return argon2.hash(p, { type: argon2.argon2id }); }
 }

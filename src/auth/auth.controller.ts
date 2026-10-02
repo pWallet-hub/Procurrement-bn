@@ -31,6 +31,8 @@ export class AuthController {
   setup(@CurrentUser() u: AuthUser) { return this.auth.totpSetup(u); }
   @Post('auth/totp/enable')
   enable(@CurrentUser() u: AuthUser, @Body() b: any) { need(b, 'code'); return this.auth.totpEnable(u, String(b.code)); }
+  @Post('auth/change-password')
+  change(@CurrentUser() u: AuthUser, @Body() b: any, @ClientIp() ip: string | null) { need(b, 'current_password', 'new_password'); return this.auth.changePassword(u, b.current_password, b.new_password, ip); }
   @Get('me')
   me(@CurrentUser() u: AuthUser) { return this.auth.me(u.id); }
 }

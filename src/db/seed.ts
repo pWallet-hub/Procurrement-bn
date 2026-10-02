@@ -4,6 +4,33 @@ import { config } from '../config/config';
 import { ROLES, ROLE_PERMISSIONS } from '../auth/permissions';
 import { ALL_TEMPLATES } from '../templates/definitions';
 
+/**
+ * Initial administrator from ADMIN_EMAIL / ADMIN_PASSWORD. Created once; an existing account is never overwritten
+ * (so a password the admin changed stays), unless ADMIN_FORCE_RESET=true is set to recover a lost password.
+ */
+async function ensureAdmin(pool: Pool) {
+  const a = config.admin;
+  if (!a.email || !a.password) {
+    if (config.isProd) throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD must be set in production (they create the first administrator)');
+    return;
+  }
+  if (a.password.length < 10) throw new Error('ADMIN_PASSWORD must be at least 10 characters');
+  const hash = await argon2.hash(a.password, { type: argon2.argon2id });
+  const existing = (await pool.query('SELECT id FROM users WHERE email = $1', [a.email])).rows[0];
+  let id: string;
+  if (!existing) {
+    id = (await pool.query('INSERT INTO users (email, full_name, position, password_hash) VALUES ($1,$2,$3,$4) RETURNING id', [a.email, a.name, 'System Administrator', hash])).rows[0].id;
+    console.log(`initial administrator created: ${a.email}`);
+  } else {
+    id = existing.id;
+    if (a.forceReset) {
+      await pool.query('UPDATE users SET password_hash = $2, active = true, failed_logins = 0, locked_until = NULL WHERE id = $1', [id, hash]);
+      console.log(`administrator password reset: ${a.email}`);
+    }
+  }
+  await pool.query("INSERT INTO user_roles (user_id, role_code) VALUES ($1,'admin') ON CONFLICT DO NOTHING", [id]);
+}
+
 /** Idempotent seed: roles, permissions, templates always; demo users, departments, budget lines, suppliers only in non-production. */
 export async function seed(): Promise<void> {
   const pool = new Pool({ connectionString: config.databaseUrl });
@@ -24,6 +51,8 @@ export async function seed(): Promise<void> {
          ON CONFLICT (code, version) DO UPDATE SET title = $3, description = $4, schema = $5, signature_slots = $6, workflow = $7, active = true`,
         [t.code, t.version, t.title, t.description, JSON.stringify(t.schema), JSON.stringify(t.signature_slots), JSON.stringify(t.workflow)]);
     }
+
+    await ensureAdmin(pool);
 
     if (!config.isProd) {
       const deps: Record<string, string> = {};

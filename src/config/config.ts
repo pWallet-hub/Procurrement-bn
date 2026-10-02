@@ -31,6 +31,13 @@ export const config = {
     pass: env.SMTP_PASS || undefined,
     secure: env.SMTP_SECURE === 'true',
   },
+  /** Initial administrator, created on first start if missing. Required in production. */
+  admin: {
+    email: (env.ADMIN_EMAIL ?? '').trim().toLowerCase(),
+    password: env.ADMIN_PASSWORD ?? '',
+    name: env.ADMIN_NAME ?? 'System Administrator',
+    forceReset: env.ADMIN_FORCE_RESET === 'true',
+  },
   seedOnStart: env.SEED_ON_START === 'true',
   seedPassword: env.SEED_PASSWORD ?? 'Passw0rd!dev',
   maxUploadBytes: 20 * 1024 * 1024,
