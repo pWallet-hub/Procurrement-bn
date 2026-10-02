@@ -1,0 +1,72 @@
+# Backend stack: API + worker + PostgreSQL + Redis + MinIO (S3 files) + Mailpit (dev mail catcher).
+# Start:  docker compose up --build        API: http://localhost:3000/api/v1/health
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: afs
+      POSTGRES_PASSWORD: afs_dev_password
+      POSTGRES_DB: afs
+    volumes: [pgdata:/var/lib/postgresql/data]
+    ports: ["5432:5432"]          # dev only; remove in production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U afs -d afs"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: afsminio
+      MINIO_ROOT_PASSWORD: afsminio_dev_secret
+    volumes: [miniodata:/data]
+    ports: ["9000:9000", "9001:9001"]   # 9001 = console
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["8025:8025"]           # inbox UI; SMTP on 1025 inside the network
+
+  api:
+    build: .
+    env_file: [.env]
+    environment:
+      ROLE: api
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    ports: ["3000:3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build: .
+    command: ["node", "dist/worker.js"]
+    env_file: [.env]
+    depends_on:
+      api: { condition: service_healthy }   # api runs migrations first
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
