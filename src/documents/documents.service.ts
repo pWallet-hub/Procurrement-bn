@@ -288,7 +288,7 @@ export class DocumentsService {
       const m = DATA_URL.exec(body.signature_image ?? '');
       if (!m) throw badRequest('bad_signature', 'Provide the signature as a PNG or JPEG data URL', { signature_image: 'required' });
       const buf = Buffer.from(m[2], 'base64');
-      if (buf.length > 700 * 1024) throw badRequest('bad_signature', 'Signature image is too large', { signature_image: 'too large' });
+      if (buf.length > 1024 * 1024) throw badRequest('bad_signature', 'Signature image is too large', { signature_image: 'too large' });
       imageKey = `signatures/${doc.id}/${slot.id}.${m[1] === 'png' ? 'png' : 'jpg'}`;
       await this.storage.put(imageKey, buf, `image/${m[1]}`);
     }

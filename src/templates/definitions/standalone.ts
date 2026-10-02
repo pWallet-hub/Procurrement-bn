@@ -22,7 +22,7 @@ export const GR06: TemplateDef = {
         f.text('description', 'Description', req), f.text('specification_purpose', 'Specification / purpose'),
         f.number('qty', 'Qty', { ...req, min: 0, exclusive_min: true }), f.money('unit_cost', 'Unit cost', req),
         f.computed('est_total', 'Est. total', { op: 'mul', fields: ['qty', 'unit_cost'] }, { format: 'money' }),
-      ], 1, 3, { required_if: goods }),
+      ], 1, 50, { required_if: goods }),
     ] },
     { key: 'travel', title: 'D. Travel / Transport Budget Request — Complete where applicable', visible_if: when('request_types', { includes: 'local_travel_or_field_work' }), fields: [
       f.radio('travel_category', 'Distance', ['Within 30 km', 'Beyond 70 km'], { required_if: travel, help: 'Journeys between 30 and 70 km: the approver sees the distance control note before authorizing.' }),
@@ -100,7 +100,7 @@ export const CONTRACT: TemplateDef = {
       f.caseRef('supplier_telephone', "Supplier's telephone"), f.caseRef('supplier_tin', 'TIN number or ID no.'),
     ] },
     { key: 'scope', title: 'Scope of Services', description: 'The Supplier agrees to provide the following services and/or materials to AfS-Rwanda:', fields: [
-      f.table('scope', 'Scope', [f.text('col1', 'Service / material', req), f.text('col2', 'Description'), f.text('col3', 'Quantity / deliverable')], 1, 8, req),
+      f.table('scope', 'Scope', [f.text('col1', 'Service / material', req), f.text('col2', 'Description'), f.text('col3', 'Quantity / deliverable')], 1, 50, req),
     ] },
     { key: 'terms', title: 'Terms', fields: [
       f.money('contract_value', 'Contract value', { readonly: true, help: CLAUSES.value }),

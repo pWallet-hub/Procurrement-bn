@@ -22,7 +22,7 @@ export const PR01: TemplateDef = {
         f.money('unit_cost', 'Unit cost', req),
         f.money('est_unit_cost', 'Est. unit cost', req),
         f.computed('est_total', 'Est. total', { op: 'mul', fields: ['qty', 'est_unit_cost'] }, { format: 'money' }),
-      ], 1, 5, req),
+      ], 1, 50, req),
     ] },
     { key: 'justification', title: 'Justification', fields: [
       f.textarea('business_justification', 'Business justification', req),
@@ -179,7 +179,7 @@ export const PO09: TemplateDef = {
       f.table('lines', 'Lines', [
         f.text('description', 'Description', req), f.text('specification_scope', 'Specification / scope', req),
         f.number('qty', 'Qty', { ...req, min: 0, exclusive_min: true }), f.text('unit', 'Unit', req), f.money('unit_price', 'Unit price', req),
-      ], 1, 5, req),
+      ], 1, 50, req),
       f.computed('subtotal', 'Subtotal', { op: 'sum_mul', table: 'lines', fields: ['qty', 'unit_price'] }, { format: 'money' }),
       f.money('tax_vat', 'Tax / VAT', req),
       f.computed('total_po_value', 'Total PO value', { op: 'add', fields: ['subtotal', 'tax_vat'] }, { format: 'money' }),

@@ -173,7 +173,7 @@ export function renderPaper(c: PaperCtx): Promise<PDFKit.PDFDocument> {
     P(`Supplier\nSupplier's Name: ${d.supplier_name ?? c.fmt({ key: 'supplier', type: 'supplier_ref', label: '' } as Field, d.supplier)}\nSupplier's Address: ${f('supplier_address')}\nSupplier's Email: ${f('supplier_email')}\nSupplier's Telephone: ${f('supplier_telephone')}\nTIN Number OR ID No: ${f('supplier_tin')}`, { gap: 8 });
     P('Scope of Services: The Supplier agrees to provide the following services and/or materials to AfS-Rwanda:', { bold: true, gap: 3 });
     const rows: any[] = d.scope ?? [];
-    for (let i = 0; i < 8; i++) { const r = rows[i] ?? {}; P(`${i + 1}. ${[r.col1, r.col2, r.col3].filter(Boolean).join('   |   ') || '_______________________________________________'}`, { gap: 2 }); }
+    for (let i = 0; i < Math.max(8, rows.length); i++) { const r = rows[i] ?? {}; P(`${i + 1}. ${[r.col1, r.col2, r.col3].filter(Boolean).join('   |   ') || '_______________________________________________'}`, { gap: 2 }); }
     y += 4;
     const val = d.contract_value?.amount ? `${Number(d.contract_value.amount).toLocaleString('en-US')} ${d.contract_value.currency}. ` : '';
     const adv = d.advance_percent ?? 50, days = d.advance_days ?? 2;

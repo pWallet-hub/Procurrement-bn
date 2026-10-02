@@ -81,7 +81,7 @@ export async function prefill(q: Queryable, docType: string, c: CaseCtx | null, 
         supplier: c.selected_supplier_id ?? undefined, supplier_address: s?.address ?? '', supplier_email: s?.email ?? '', supplier_telephone: s?.phone ?? '', supplier_tin: s?.tin_or_reg_no ?? '',
         contract_value: c.approved_amount != null ? { amount: Number(c.approved_amount), currency: c.currency ?? 'RWF' } : undefined,
         advance_percent: 50, advance_days: 2,
-        scope: (po?.data?.lines ?? []).slice(0, 8).map((l: any) => ({ col1: l.description, col2: l.specification_scope, col3: `${l.qty} ${l.unit ?? ''}`.trim() })),
+        scope: (po?.data?.lines ?? []).map((l: any) => ({ col1: l.description, col2: l.specification_scope, col3: `${l.qty} ${l.unit ?? ''}`.trim() })),
       };
     }
     case 'PA-04': {
