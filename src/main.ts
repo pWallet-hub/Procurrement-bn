@@ -12,6 +12,7 @@ async function bootstrap() {
   if (config.seedOnStart) await seed();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: true });
   app.set('trust proxy', 1);
+  app.disable('x-powered-by');
   app.useBodyParser('json', { limit: '2mb' }); // signature images arrive as data URLs
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: config.corsOrigins, credentials: true, exposedHeaders: ['Content-Disposition'] });

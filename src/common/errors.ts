@@ -23,7 +23,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const res = host.switchToHttp().getResponse();
     if (e instanceof HttpException) {
       const body: any = e.getResponse();
-      if (body?.error) return res.status(e.getStatus()).json(body);
+      if (body?.error && typeof body.error === 'object') return res.status(e.getStatus()).json(body);
       const msg = typeof body === 'string' ? body : Array.isArray(body?.message) ? body.message.join(', ') : body?.message ?? e.message;
       return res.status(e.getStatus()).json({ error: { code: `http.${e.getStatus()}`, message: msg } });
     }

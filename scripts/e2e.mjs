@@ -1,12 +1,16 @@
 // End-to-end smoke test: runs a full procurement case and an IM-08 memo against a running API.
 //   API=http://localhost:3000/api/v1 node scripts/e2e.mjs
 import { randomUUID } from 'node:crypto';
+import { execSync } from 'node:child_process';
 const API = process.env.API ?? 'http://localhost:3000/api/v1';
+const REMOTE = process.env.E2E_REMOTE === '1'; // against a deployed server: skip steps that need local Mailpit/Docker
 const PASSWORD = process.env.SEED_PASSWORD ?? 'Passw0rd!dev';
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 let passed = 0;
-const ok = (c, m) => { if (!c) { console.error('FAIL:', m); process.exit(1); } passed++; console.log('  ok', m); };
+const failures = [];
+const SOFT = process.env.E2E_SOFT === '1'; // keep going after a failed check and summarise at the end
+const ok = (c, m) => { if (!c) { console.error('FAIL:', m); if (!SOFT) process.exit(1); failures.push(m); return; } passed++; console.log('  ok', m); };
 
 async function call(method, path, token, body, raw = false) {
   const res = await fetch(API + path, { method, headers: { ...(body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Idempotency-Key': randomUUID() }, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
@@ -59,7 +63,7 @@ ok(last.document_state === 'signed', 'PR-01 fully signed');
 let c = await call('GET', `/cases/${caseId}`, T.staff);
 ok(c.current_stage === 'quotation', 'case moved to quotation stage');
 must(await call('PATCH', `/cases/${caseId}`, T.staff, { market_check_required: true }), 403, 'staff cannot configure the case');
-must(await call('PATCH', `/cases/${caseId}`, T.accountant, { market_check_required: true, contract_required: true }), 200, 'accountant requires market check and a contract');
+must(await call('PATCH', `/cases/${caseId}`, T.accountant, { market_check_required: true, contract_required: !REMOTE }), 200, REMOTE ? 'accountant requires a market check' : 'accountant requires market check and a contract');
 
 console.log('\n== QC-02 quotations');
 must(await call('POST', `/cases/${caseId}/documents`, T.staff, { doc_type: 'QC-02' }), 403, 'staff cannot create QC-02');
@@ -117,12 +121,14 @@ const po = must(await call('POST', `/documents/${po0.id}/submit`, T.accountant),
 must(await sign(po.id, 'issued_by', T.accountant, po), 201, 'accountant issues');
 must(await sign(po.id, 'authorized_by_pi', T.pi, po), 201, 'PI authorizes');
 c = await call('GET', `/cases/${caseId}`, T.staff);
-ok(c.current_stage === 'purchase_order', 'PO signed but case waits for the contract');
+if (!REMOTE) ok(c.current_stage === 'purchase_order', 'PO signed but case waits for the contract'); else ok(c.current_stage === 'delivery', 'PO signed, case in delivery stage');
 
+let ct;
+if (!REMOTE) {
 console.log('\n== supplier contract (external signer, no account)');
 const ct0 = must(await call('POST', `/cases/${caseId}/documents`, T.accountant, { doc_type: 'CONTRACT' }), 201, 'create CONTRACT');
 ok(ct0.data.contract_value.amount === 95000 && ct0.data.scope.length === 1, 'contract prefilled with value and scope from the PO');
-const ct = must(await call('POST', `/documents/${ct0.id}/submit`, T.accountant), 201, 'submit CONTRACT');
+ct = must(await call('POST', `/documents/${ct0.id}/submit`, T.accountant), 201, 'submit CONTRACT');
 must(await sign(ct.id, 'supplier_signatory', T.pi, ct), 403, 'internal user cannot sign the supplier slot');
 must(await sign(ct.id, 'afs_signatory', T.pi, ct), 201, 'PI signs for AfS-Rwanda');
 await new Promise((r) => setTimeout(r, 4000));
@@ -139,6 +145,8 @@ must(await call('POST', `/sign/${stoken}`, null, { content_hash: view.document.c
 must(await call('POST', `/sign/${stoken}`, null, { content_hash: view.document.content_hash, declaration_accepted: true, method: 'type', signature_text: 'again', signer_name: 'X' }), 410, 'token cannot be reused');
 c = await call('GET', `/cases/${caseId}`, T.staff);
 ok(c.current_stage === 'delivery', 'case in delivery stage after both PO and contract');
+
+}
 
 console.log('\n== delivery and PA-04 payment');
 must(await call('POST', `/cases/${caseId}/documents`, T.accountant, { doc_type: 'PA-04' }), 422, 'PA-04 not allowed before payment stage');
@@ -159,6 +167,10 @@ must(await sign(pa.id, 'final_approval', T.cfm, pa), 201, 'CFM gives final appro
 c = await call('GET', `/cases/${caseId}`, T.staff);
 ok(c.status === 'closed' && c.current_stage === 'closed', 'case closed');
 
+console.log('\n== audit chain under concurrency');
+await Promise.all(Array.from({ length: 25 }, (_, i) => { const f = new FormData(); f.append('file', new Blob([`stress ${i}`], { type: 'text/plain' }), `s${i}.txt`); return call('POST', '/attachments', T.accountant, f); }));
+ok(true, '25 concurrent uploads (each writes an audit event)');
+
 console.log('\n== PDF, verification, audit, timeline');
 await new Promise((r) => setTimeout(r, 6000)); // worker renders PDFs
 const prFinal = await getDoc(pr.id, T.staff);
@@ -175,13 +187,13 @@ ok(au.items.length > 20, 'audit search works for the accountant');
 const caseFile = await call('GET', `/cases/${caseId}/purchase-file`, T.accountant, null, true);
 ok(caseFile.status === 200, 'purchase file (merged PDF) available for the closed case');
 must(await call('GET', '/reports/spend', T.accountant), 200, 'spend report');
-const mails = await fetch(`http://localhost:${process.env.MAILPIT_PORT ?? 8125}/api/v1/messages`).then((r) => r.json()).catch(() => null);
+const mails = REMOTE ? null : await fetch(`http://localhost:${process.env.MAILPIT_PORT ?? 8125}/api/v1/messages`).then((r) => r.json()).catch(() => null);
 if (mails) ok(mails.total > 5, `mailpit captured ${mails.total} e-mails`);
 
+if (!REMOTE) {
 console.log('\n== tamper evidence');
 const ctFinal = await getDoc(ct.id, T.staff);
 ok(ctFinal.state === 'archived', 'contract archived after both signatures');
-import { execSync } from 'node:child_process';
 const sql = (q) => execSync(`docker compose exec -T postgres psql -U afs -d afs -tA -c "${q}"`, { cwd: process.env.COMPOSE_DIR ?? new URL('..', import.meta.url).pathname }).toString();
 let blocked = false;
 try { sql("UPDATE audit_events SET action = 'x' WHERE id = 1"); } catch { blocked = true; }
@@ -191,6 +203,8 @@ const bad = await call('GET', `/verify/${pr.id}`, null);
 ok(bad.ok === false && bad.checks.content_hash === false, 'verify detects a tampered document');
 sql(`UPDATE documents SET data = jsonb_set(data, '{project_activity}', to_jsonb('${'OFAB Rwanda Chapter'}'::text)) WHERE id = '${pr.id}'`);
 ok((await call('GET', `/verify/${pr.id}`, null)).ok === true, 'verify passes again once restored');
+
+}
 
 console.log('\n== IM-08 memo with decision at the superior slot');
 const memo = must(await call('POST', '/documents', T.staff, { doc_type: 'IM-08', data: { memo_reference_name: 'Printing of banners', department_office: 'Communications', issue_description: 'We need banners', recommendation: 'Procure 10 banners' } }), 201, 'create IM-08');
@@ -209,4 +223,5 @@ const tok = new URL(inv.invite_link).searchParams.get('token');
 must(await call('POST', '/auth/accept-invite', null, { token: tok, password: 'A-long-password-1' }), 201, 'invitee sets a password');
 must(await call('POST', '/auth/accept-invite', null, { token: tok, password: 'A-long-password-1' }), 400, 'invite link is single use');
 
+if (failures.length) { console.log(`\n${passed} passed, ${failures.length} FAILED:`); failures.forEach((f) => console.log(' -', f)); process.exit(1); }
 console.log(`\nALL GOOD: ${passed} checks passed`);

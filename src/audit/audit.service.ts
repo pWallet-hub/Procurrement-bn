@@ -17,6 +17,8 @@ export class AuditService {
 
   /** Append one chained event. Pass the transaction client so it commits with the change it describes. */
   async log(e: AuditInput, q: Queryable = this.db): Promise<void> {
+    // outside a transaction the advisory lock would be released after each statement and concurrent writers could fork the chain
+    if (q === (this.db as Queryable)) return this.db.tx((c) => this.log(e, c));
     await q.query('SELECT pg_advisory_xact_lock(727002)'); // serialise chain writes
     const prev = (await q.query('SELECT event_hash FROM audit_events ORDER BY id DESC LIMIT 1')).rows[0]?.event_hash ?? null;
     const at = new Date().toISOString();
