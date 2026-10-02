@@ -1,13 +1,13 @@
 # Procurrement-bn
 
 Backend for the **AfS Rwanda Digital Procurement and E-Signature System** (spec: `AfS Rwanda Digital Procurement and E-Signature System Project Document.md`).
-NestJS + TypeScript, PostgreSQL, Redis (BullMQ), MinIO (S3 files), Mailpit (dev mail). Everything runs in Docker.
+NestJS + TypeScript, PostgreSQL, Redis (BullMQ), SeaweedFS (S3 files, replaces the unmaintained MinIO), Mailpit (dev mail). Everything runs in Docker.
 
 ## Run
 
 ```bash
 cp .env.example .env          # first time; change the host ports at the bottom if they clash
-docker compose up -d --build  # api + worker + postgres + redis + minio + mailpit
+docker compose up -d --build  # api + worker + postgres + redis + storage (SeaweedFS) + mailpit
 curl localhost:${API_PORT:-3000}/api/v1/health
 ```
 
@@ -17,7 +17,7 @@ Migrations and the seed (roles, permissions, the nine form templates, demo users
 | --- | --- |
 | API | http://localhost:3000/api/v1 |
 | Mailpit (all e-mails, invite and signing links) | http://localhost:8025 |
-| MinIO console (`afsminio` / `afsminio_dev_secret`) | http://localhost:9001 |
+| S3 API (SeaweedFS, keys `afsstorage` / `afsstorage_dev_secret`) | http://localhost:8333 |
 | PostgreSQL (`afs` / `afs_dev_password`, db `afs`) | localhost:5432 |
 
 Demo accounts (password `Passw0rd!dev`, no TOTP in dev): `admin@`, `staff@` (requesting staff), `accountant@`, `director.comms@`, `director.dept@`, `pi@`, `cfm@`, `verifier@`, `superior@` + `afs.local`.

@@ -13,6 +13,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY db ./db
+COPY assets ./assets
 RUN mkdir -p /data/files && chown -R node:node /data /app
 USER node
 EXPOSE 3000

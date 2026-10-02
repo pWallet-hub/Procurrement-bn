@@ -4,7 +4,7 @@ import { promises as fs } from 'fs';
 import { dirname, join, normalize } from 'path';
 import { config } from '../config/config';
 
-/** Storage interface: local encrypted volume or any S3 compatible store (MinIO in Docker). */
+/** Storage interface: local encrypted volume or any S3 compatible store (SeaweedFS in Docker). */
 @Injectable()
 export class StorageService implements OnModuleInit {
   private log = new Logger('Storage');

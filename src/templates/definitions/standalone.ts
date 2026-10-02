@@ -8,28 +8,30 @@ export const GR06: TemplateDef = {
   code: 'GR-06', version: 1, title: 'General Requisition and Activity Support Request',
   description: 'Authorization request for activity support. Does not replace procurement procedures where thresholds or competitive sourcing apply.',
   schema: { sections: [
-    { key: 'request', title: 'Request', fields: [
-      f.text('project_activity', 'Project / activity', req), f.budget('budget_line', 'Budget line', req),
-      f.textarea('purpose_justification', 'Purpose and justification', req),
+    { key: 'request', title: 'A. Request Information', fields: [
+      f.text('project_activity', 'Project / activity', req), f.budget('budget_line', 'Budget line / cost centre', req),
+      f.textarea('purpose_justification', 'Purpose / justification', req),
+    ] },
+    { key: 'type', title: 'B. Type of Request — Tick the applicable category', fields: [
       f.checks('request_types', 'Type of request', ['Office supplies', 'Incidental fees', 'Accommodation', 'Per diems', 'Local travel or field work', 'International travel'], { ...req, allow_other: true }),
       f.textarea('noted_details', 'Noted details'),
       f.money('estimated_total', 'Estimated total', req),
     ] },
-    { key: 'items', title: 'C. Items', fields: [
+    { key: 'items', title: 'C. Office Supplies / Fees Details — Complete where applicable', fields: [
       f.table('items', 'Items', [
         f.text('description', 'Description', req), f.text('specification_purpose', 'Specification / purpose'),
         f.number('qty', 'Qty', { ...req, min: 0, exclusive_min: true }), f.money('unit_cost', 'Unit cost', req),
         f.computed('est_total', 'Est. total', { op: 'mul', fields: ['qty', 'unit_cost'] }, { format: 'money' }),
       ], 1, 3, { required_if: goods }),
     ] },
-    { key: 'travel', title: 'D. Travel', visible_if: when('request_types', { includes: 'local_travel_or_field_work' }), fields: [
+    { key: 'travel', title: 'D. Travel / Transport Budget Request — Complete where applicable', visible_if: when('request_types', { includes: 'local_travel_or_field_work' }), fields: [
       f.radio('travel_category', 'Distance', ['Within 30 km', 'Beyond 70 km'], { required_if: travel, help: 'Journeys between 30 and 70 km: the approver sees the distance control note before authorizing.' }),
       f.textarea('travelers', 'Traveling team', { required_if: travel }), f.file('team_list_file', 'Team list (attachment)'),
       f.text('destination', 'Destination', { required_if: travel }),
       f.date('departure_date', 'Departure date', { required_if: travel }), f.time('departure_time', 'Departure time', { required_if: travel }),
       f.checks('transport', 'Transport', ['Office vehicle', 'Taxi ride', 'Public transport', 'Hired vehicle', 'Motorcycle', 'Mileage or fuel support'], { allow_other: true, required_if: travel }),
     ] },
-    { key: 'funds', title: 'F. Funds action (finance step)', fields: [
+    { key: 'funds', title: 'F. Finance / Administration Action', fields: [
       f.checks('funds_action', 'Funds action', ['Cash advance', 'Direct payment', 'Vehicle / fuel / transport arranged', "Supplier's invoice cover"], { fill_at: 'processed_by', required: true }),
     ] },
   ] },
@@ -54,7 +56,7 @@ export const IM08: TemplateDef = {
       f.textarea('issue_description', 'Issue, background, urgency, operational implication, references', req),
       f.textarea('recommendation', 'Recommendation: proposed solution and reason', req),
     ] },
-    { key: 'decision', title: 'Management decision', description: 'Filled by the superior when the memo reaches the decision step.', fields: [
+    { key: 'decision', title: 'C. Superior Guidance and Management Decision', description: 'Filled by the superior when the memo reaches the decision step.', fields: [
       f.textarea('decision_advice', 'Decision / advice', { fill_at: 'superior' }),
       f.radio('decision_status', 'Decision', ['Approved', 'Approved with conditions', 'Further information required', 'Not approved'], { fill_at: 'superior', required: true }),
       f.radio('priority', 'Priority', ['Immediate', 'High', 'Routine'], { fill_at: 'superior', required: true }),
@@ -62,7 +64,7 @@ export const IM08: TemplateDef = {
       f.checks('action_types', 'Action type', ['Internal administrative action', 'Procurement process', 'Single source justification or approval', 'Consultant or professional expert', 'Service provider', 'Goods or supplies'], { allow_other: true, fill_at: 'superior', required: true }),
       f.file('single_source_justification', 'Single source justification', { fill_at: 'superior', required_if: when('action_types', { includes: 'single_source_justification_or_approval' }), visible_if: when('action_types', { includes: 'single_source_justification_or_approval' }) }),
     ] },
-    { key: 'followup', title: 'D. Follow-up', fields: [
+    { key: 'followup', title: 'D. Follow-up Action', fields: [
       f.table('follow_up', 'Follow-up actions', [
         f.user('staff', 'Staff', req), f.text('action_assigned', 'Action assigned', req), f.date('due_date', 'Due date', req),
       ], 1, 3, { ...req, fill_at: 'superior' }),

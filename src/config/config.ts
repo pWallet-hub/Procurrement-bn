@@ -20,8 +20,8 @@ export const config = {
     endpoint: env.S3_ENDPOINT ?? 'http://localhost:9000',
     region: env.S3_REGION ?? 'us-east-1',
     bucket: env.S3_BUCKET ?? 'afs-files',
-    accessKey: env.S3_ACCESS_KEY ?? 'afsminio',
-    secretKey: env.S3_SECRET_KEY ?? 'afsminio_dev_secret',
+    accessKey: env.S3_ACCESS_KEY ?? 'afsstorage',
+    secretKey: env.S3_SECRET_KEY ?? 'afsstorage_dev_secret',
   },
   mail: {
     from: env.MAIL_FROM ?? 'AfS Procurement <procurement@afs.local>',

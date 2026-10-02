@@ -38,9 +38,24 @@ export interface WorkflowDef {
   footer_note?: string;
 }
 
+/** How the form is laid out on paper / in the paper view (mirrors the printed AfS-Rwanda forms in /temp) */
+export interface PaperMeta {
+  layout: 'form' | 'contract';
+  form_label: string;            // "FORM: <form_label>" in the header box
+  title: string;                 // upper case title as printed
+  version: string;               // "Version: 1.0"
+  date_label: string;            // Effective | Issue Date | Date | Date Submitted
+  org: string;                   // left header cell
+  footer: string;                // centred footer line
+  intro?: string;                // small paragraph under the header
+  signoff_before?: string;       // section key the sign-off grid is printed before (default: after all sections)
+  signoff_title: string;         // heading above the Name / Signature / Date grid
+  notes?: string;                // italic note under the sign-off grid
+}
+
 export interface TemplateDef {
   code: string; version: number; title: string; description: string;
-  schema: { sections: Section[] };
+  schema: { sections: Section[]; paper?: PaperMeta };
   signature_slots: SlotDef[];
   workflow: WorkflowDef;
 }

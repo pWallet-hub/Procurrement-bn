@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import PDFDocument from 'pdfkit';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { renderPaper } from './paper-pdf';
 import * as QRCode from 'qrcode';
 import { PDFDocument as LibDoc } from 'pdf-lib';
 import { Db } from '../db/db.service';
@@ -12,7 +14,6 @@ import { sha256 } from '../common/hash';
 import { notFound } from '../common/errors';
 import { Field } from '../templates/types';
 
-const GREEN = '#0b6b3a';
 
 @Injectable()
 export class PdfService {
@@ -40,7 +41,7 @@ export class PdfService {
     }
   }
 
-  /** Build the PDF: form content, signature blocks with stamped signatures, audit page with QR. */
+  /** Build the PDF: the paper form (logo, header box, sections, sign-off grid), then an audit page with QR. */
   async build(docId: string, opts: { draft?: boolean } = {}): Promise<Buffer> {
     const doc = await this.db.one('SELECT * FROM documents WHERE id = $1', [docId]);
     if (!doc) throw notFound('document');
@@ -54,55 +55,36 @@ export class PdfService {
     const lk = await this.lookups();
     const head = (await this.db.one('SELECT event_hash FROM audit_events ORDER BY id DESC LIMIT 1'))?.event_hash ?? '';
     const qr = await QRCode.toBuffer(`${config.appUrl}/verify/${docId}`, { margin: 1, width: 160 });
-
-    const pdf = new PDFDocument({ size: 'A4', margin: 48, info: { Title: tpl.title, Author: 'AfS-Rwanda' } });
-    const chunks: Buffer[] = [];
-    pdf.on('data', (c) => chunks.push(c));
-    const done = new Promise<Buffer>((r) => pdf.on('end', () => r(Buffer.concat(chunks))));
-
-    const heading = (t: string) => { pdf.moveDown(0.8).fontSize(11).fillColor(GREEN).font('Helvetica-Bold').text(t).fillColor('#000').font('Helvetica'); };
-    const line = (label: string, value: string) => { pdf.fontSize(9).font('Helvetica-Bold').text(`${label}: `, { continued: true }).font('Helvetica').text(value); };
-
-    pdf.fontSize(9).fillColor('#666').text('Alliance for Science Rwanda (AfS-Rwanda)', { align: 'right' });
-    pdf.fontSize(16).fillColor(GREEN).font('Helvetica-Bold').text(tpl.title);
-    pdf.fontSize(9).fillColor('#444').font('Helvetica').text(`${tpl.code} v${tpl.version}  |  Document version ${doc.version}  |  ${cs ? `Request ${cs.request_no}` : 'Standalone'}  |  Status: ${opts.draft ? 'DRAFT (not signed)' : doc.state}`).fillColor('#000');
-
-    for (const sec of tpl.schema.sections) {
-      heading(sec.title);
-      if (sec.description) pdf.fontSize(8).fillColor('#555').text(sec.description.replace(/\{(\w+)\}/g, (_m: string, k: string) => String(data[k] ?? '')), { width: 500 }).fillColor('#000');
-      for (const f of sec.fields as Field[]) {
-        if (f.type === 'table') {
-          pdf.fontSize(9).font('Helvetica-Bold').text(f.label).font('Helvetica');
-          ((data[f.key] ?? []) as any[]).forEach((row, i) => pdf.fontSize(8).text(`${i + 1}. ` + (f.columns ?? []).map((c) => `${c.label}: ${this.fmt(c, row[c.key], lk)}`).join('  |  '), { indent: 8 }));
-        } else line(f.label, this.fmt(f, data[f.key], lk));
-      }
-    }
-
-    heading('Signatures');
+    let logo: Buffer | null = null;
+    try { logo = readFileSync(join(__dirname, '../../assets/logo.png')); } catch { /* logo is optional */ }
+    const fieldOf = new Map<string, Field>(tpl.schema.sections.flatMap((s: any) => s.fields).map((f: Field) => [f.key, f]));
+    const sigSlots = [];
     for (const s of slots) {
-      if (pdf.y > 700) pdf.addPage();
-      const y = pdf.y;
-      pdf.fontSize(9).font('Helvetica-Bold').text(s.label, 48, y);
-      pdf.font('Helvetica').fontSize(8).fillColor('#555').text(s.declaration ?? '', 48, pdf.y, { width: 300 }).fillColor('#000');
-      if (s.status === 'signed') {
-        if (s.signature_image_key) {
-          try { pdf.image(await this.storage.get(s.signature_image_key), 360, y, { fit: [150, 40] }); } catch { /* image unreadable: name and time below still prove the signature */ }
-        } else if (s.signature_text) pdf.font('Helvetica-Oblique').fontSize(14).text(s.signature_text, 360, y);
-        pdf.font('Helvetica').fontSize(8).text(`${s.signer_name} - ${new Date(s.signed_at).toISOString().replace('T', ' ').slice(0, 19)} UTC`, 360, y + 42);
-      } else pdf.fontSize(8).fillColor('#a00').text(`(${s.status})`, 360, y).fillColor('#000');
-      pdf.moveDown(2.2);
+      let image: Buffer | null = null;
+      if (s.signature_image_key) { try { image = await this.storage.get(s.signature_image_key); } catch { image = null; } }
+      sigSlots.push({ slot_key: s.slot_key, label: s.label, declaration: s.declaration, status: s.status, signer_name: s.signer_name, signed_at: s.signed_at, method: s.method, signature_text: s.signature_text, image, position: s.slot_data?._signer_position ?? null });
     }
+    const dateField = ['issue_date', 'evaluation_date', 'date_of_request', 'collection_date', 'mpv_date', 'date_submitted'].find((k) => data[k]);
+    const pdf = await renderPaper({
+      title: tpl.title, paper: tpl.schema.paper, sections: tpl.schema.sections, data, slots: sigSlots, logo, requestNo: cs?.request_no ?? null,
+      draft: !!opts.draft, dateText: dateField ? String(data[dateField]).split('-').reverse().join('/') : new Date(doc.created_at).toISOString().slice(0, 10).split('-').reverse().join('/'),
+      fmt: (f, v) => (f.type === 'date' && typeof v === 'string' ? v.split('-').reverse().join('/') : this.fmt(f, v, lk)),
+    });
+    void fieldOf;
+    const chunks: Buffer[] = [];
+    pdf.on('data', (c: Buffer) => chunks.push(c));
+    const done = new Promise<Buffer>((r) => pdf.on('end', () => r(Buffer.concat(chunks))));
 
     // audit page
     pdf.addPage();
-    pdf.fontSize(14).fillColor(GREEN).font('Helvetica-Bold').text('Audit page').fillColor('#000').font('Helvetica');
+    pdf.fontSize(14).fillColor('#0b6b3a').font('Helvetica-Bold').text('Audit page', 36, 40).fillColor('#000').font('Helvetica');
     pdf.fontSize(8).moveDown().text(`Document id: ${docId}`).text(`Content hash (SHA-256): ${doc.content_hash ?? '(not frozen)'}`).text(`Audit chain head: ${head}`);
     pdf.moveDown();
     for (const s of slots.filter((x) => x.status === 'signed')) {
       pdf.fontSize(8).text(`${s.label}: ${s.signer_name} | ${new Date(s.signed_at).toISOString()} | IP ${s.ip ?? '-'} | method ${s.method} | signed hash ${s.document_hash}`);
     }
-    pdf.image(qr, 48, pdf.y + 16, { width: 100 });
-    pdf.fontSize(8).text(`Verify: ${config.appUrl}/verify/${docId}`, 160, pdf.y + 60);
+    pdf.image(qr, 36, pdf.y + 16, { width: 100 });
+    pdf.fontSize(8).text(`Verify: ${config.appUrl}/verify/${docId}`, 150, pdf.y + 60);
     pdf.end();
     return done;
   }

@@ -1,4 +1,5 @@
-# Backend stack: API + worker + PostgreSQL + Redis + MinIO (S3 files) + Mailpit (dev mail catcher).
+# Backend stack: API + worker + PostgreSQL + Redis + SeaweedFS (S3 files) + Mailpit (dev mail catcher).
+# Runs on its own: `docker compose up -d --build` in this folder.
 # Start:  docker compose up --build        API: http://localhost:3000/api/v1/health
 services:
   postgres:
@@ -25,19 +26,19 @@ services:
       timeout: 3s
       retries: 20
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: afsminio
-      MINIO_ROOT_PASSWORD: afsminio_dev_secret
-    volumes: [miniodata:/data]
-    ports: ["127.0.0.1:${MINIO_PORT:-9000}:9000", "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"]   # second = console
+  # S3 compatible object store (SeaweedFS, Apache-2.0, actively maintained). Replaces MinIO.
+  storage:
+    image: chrislusf/seaweedfs:latest
+    command: ["server", "-dir=/data", "-filer", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-ip.bind=0.0.0.0"]
+    volumes:
+      - storagedata:/data
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro   # dev credentials; use your own keys in production
+    ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9333/cluster/status || exit 1"]
       interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 30
 
   mailpit:
     image: axllent/mailpit:latest
@@ -51,7 +52,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-      minio: { condition: service_healthy }
+      storage: { condition: service_healthy }
     ports: ["${API_PORT:-3000}:3000"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -69,4 +70,4 @@ services:
 volumes:
   pgdata:
   redisdata:
-  miniodata:
+  storagedata:
