@@ -45,7 +45,8 @@ src/notifications/    queue, e-mail adapter and templates
 src/worker.ts         background jobs (email, pdf, reminders, expiry, cleanup, audit checkpoint)
 ```
 
-API contract used by the frontend: `../docs/API-CONTRACT.md`.
+**Start here (handoff for a new developer or agent): [docs/HANDOFF.md](docs/HANDOFF.md).**
+Also in `docs/`: [API-CONTRACT.md](docs/API-CONTRACT.md) (the API the frontend uses), the project specification, and `reference-forms/` (the printed AfS-Rwanda forms the templates and PDFs follow).
 
 ## Key behaviours
 
