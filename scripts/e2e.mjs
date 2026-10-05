@@ -216,6 +216,47 @@ const dec = must(await sign(memo.id, 'superior', T.superior, msub, { data: { dec
 const mfinal = await getDoc(memo.id, T.staff);
 ok(mfinal.data.decision_status === 'approved' && mfinal.data.follow_up.length === 1, 'decision data merged into the document view');
 
+console.log('\n== saved signature and automatic dates');
+const today = new Date().toISOString().slice(0, 10);
+for (const u of ['staff', 'superior']) await call('DELETE', '/me/signature', T[u]); // start clean so the test is repeatable
+const sigGet = async (t) => fetch(API + '/me/signature', { headers: { Authorization: `Bearer ${t}` } });
+ok((await sigGet(T.staff)).status === 404, 'no saved signature at first');
+ok((await call('GET', '/me', T.staff)).has_signature === false, '/me says has_signature=false');
+must(await call('PUT', '/me/signature', T.staff, { signature_image: 'data:image/gif;base64,AAAA' }), 400, 'only PNG/JPEG signatures are accepted');
+must(await call('PUT', '/me/signature', T.staff, { signature_image: PNG }), 200, 'staff saves a signature on the account');
+const got = await sigGet(T.staff);
+ok(got.status === 200 && got.headers.get('content-type') === 'image/png', 'saved signature can be read back');
+ok((await call('GET', '/me', T.staff)).has_signature === true, '/me says has_signature=true');
+const memo2 = must(await call('POST', '/documents', T.staff, { doc_type: 'IM-08', data: { memo_reference_name: 'Saved sig memo', department_office: 'Communications', issue_description: 'x', recommendation: 'y' } }), 201, 'create IM-08 for the saved-signature test');
+ok(memo2.data.date_submitted === today, 'IM-08 date_submitted filled automatically with today');
+const msub2 = must(await call('POST', `/documents/${memo2.id}/submit`, T.staff), 201, 'submit');
+const noSaved = await call('POST', `/documents/${memo2.id}/slots/originating_staff/sign`, T.staff, { content_hash: 'bad', declaration_accepted: true, method: 'saved' });
+ok(noSaved.http === 422, 'hash is still checked for saved-signature signing');
+must(await sign(memo2.id, 'originating_staff', T.staff, msub2, { method: 'saved', signature_image: undefined }), 201, 'sign with the saved signature (one click)');
+const slotImg = await fetch(`${API}/documents/${memo2.id}/slots/originating_staff/signature.png`, { headers: { Authorization: `Bearer ${T.staff}` } });
+ok(slotImg.status === 200, 'signature image stored with the document');
+const before = Buffer.from(await slotImg.arrayBuffer());
+const JPG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+must(await call('PUT', '/me/signature', T.staff, { signature_image: JPG }), 200, 'account signature replaced later');
+const after = Buffer.from(await (await fetch(`${API}/documents/${memo2.id}/slots/originating_staff/signature.png`, { headers: { Authorization: `Bearer ${T.staff}` } })).arrayBuffer());
+ok(Buffer.compare(before, after) === 0, 'changing the saved signature does not change the already signed one');
+const noSig = await call('POST', `/documents/${memo2.id}/slots/superior/sign`, T.superior, { content_hash: msub2.content_hash, declaration_accepted: true, method: 'saved' });
+ok(noSig.http === 400 && noSig.error.code === 'no_saved_signature', 'a user without a saved signature gets no_saved_signature');
+must(await call('DELETE', '/me/signature', T.staff), 200, 'saved signature deleted');
+ok((await sigGet(T.staff)).status === 404, 'and it is gone');
+// save_signature flag on a drawn signature
+const memo3 = must(await call('POST', '/documents', T.superior, { doc_type: 'IM-08', data: { memo_reference_name: 'Save flag', department_office: 'Programs', issue_description: 'x', recommendation: 'y' } }), 201, 'create IM-08 as superior');
+const msub3 = must(await call('POST', `/documents/${memo3.id}/submit`, T.superior), 201, 'submit');
+ok((await call('GET', '/me', T.superior)).has_signature === false, 'superior has no saved signature yet');
+must(await sign(memo3.id, 'originating_staff', T.superior, msub3, { save_signature: true }), 201, 'drawing a signature with save_signature=true signs');
+ok((await call('GET', '/me', T.superior)).has_signature === true, 'and it was saved on the account for next time');
+await call('DELETE', '/me/signature', T.superior);
+const prDraft = must(await call('POST', '/cases', T.staff, { project: 'Dates', budget_line_id: bl.id }), 201, 'new case for the date defaults');
+const prd = await getDoc(prDraft.documents[0].id, T.staff);
+ok(prd.data.date_of_request === today, 'PR-01 date_of_request defaults to today');
+const tplPo = await call('GET', '/templates/PO-09', T.staff);
+ok(tplPo.schema.sections.flatMap((x) => x.fields).find((f) => f.key === 'issue_date').default === 'today', 'templates expose default "today" on date fields');
+
 console.log('\n== admin: invite a user');
 const inv = must(await call('POST', '/admin/users', T.admin, { email: `new.person.${Date.now()}@afs.local`, full_name: 'New Person', position: 'Officer', roles: ['requesting_staff'] }), 201, 'admin creates user');
 ok(!!inv.invite_link, 'invite link returned in dev');

@@ -4,7 +4,7 @@ import { PAPER } from './paper';
 import { TemplateDef } from '../types';
 
 /** Bump this when a form's fields or layout change (a version already used by documents is never rewritten). */
-const VERSION = 3;
+const VERSION = 4;
 export const ALL_TEMPLATES: TemplateDef[] = [PR01, QC02, MPV03, QE03, PO09, PA04, GR06, IM08, CONTRACT].map((t) => ({
   ...t, version: VERSION, schema: { ...t.schema, paper: PAPER[t.code] },
 }));

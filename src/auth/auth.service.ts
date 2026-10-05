@@ -27,7 +27,7 @@ export class AuthService {
   }
 
   publicUser(u: any) {
-    return { id: u.id, email: u.email, full_name: u.full_name, position: u.position, roles: u.roles, permissions: u.permissions, totp_enabled: u.totp_enabled, department: u.department ?? null };
+    return { id: u.id, email: u.email, full_name: u.full_name, position: u.position, roles: u.roles, permissions: u.permissions, totp_enabled: u.totp_enabled, has_signature: !!u.has_signature, department: u.department ?? null };
   }
 
   async me(id: string) {

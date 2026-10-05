@@ -22,7 +22,7 @@ export const UserAgent = createParamDecorator((_d, ctx: ExecutionContext): strin
 export const IdemKey = createParamDecorator((_d, ctx: ExecutionContext): string | null => ctx.switchToHttp().getRequest().headers['idempotency-key'] ?? null);
 
 export const USER_SQL = `
-  SELECT u.id, u.email, u.full_name, u.position, u.department_id, u.active, u.totp_enabled,
+  SELECT u.id, u.email, u.full_name, u.position, u.department_id, u.active, u.totp_enabled, (u.signature_image_key IS NOT NULL) AS has_signature,
     COALESCE((SELECT array_agg(role_code ORDER BY role_code) FROM user_roles WHERE user_id = u.id), '{}') AS roles,
     COALESCE((SELECT array_agg(DISTINCT rp.permission) FROM user_roles ur JOIN role_permissions rp ON rp.role_code = ur.role_code WHERE ur.user_id = u.id), '{}') AS permissions
   FROM users u`;

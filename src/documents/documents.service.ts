@@ -126,7 +126,10 @@ export class DocumentsService {
     const c = caseId ? await loadCaseCtx(q, caseId) : null;
     const dep = user.department_id ? (await q.query('SELECT name FROM departments WHERE id = $1', [user.department_id])).rows[0]?.name : null;
     const pre = await prefill(q, docType, c, { id: user.id, department: dep });
-    const merged = pickKnown(tpl as any, { ...pre, ...initial });
+    // date fields marked default:"today" start with the creation date (the person can still change it)
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const dateDefaults = Object.fromEntries(tpl.schema.sections.flatMap((sec: any) => sec.fields).filter((f: any) => f.type === 'date' && f.default === 'today').map((f: any) => [f.key, todayStr]));
+    const merged = pickKnown(tpl as any, { ...dateDefaults, ...pre, ...initial });
     const data = applyComputed(tpl as any, await deriveAuto(q, docType, merged, c));
     const doc = (await q.query(
       `INSERT INTO documents (case_id, template_id, doc_type, data, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
@@ -274,15 +277,30 @@ export class DocumentsService {
     if (out?.after?.caseFile) await this.queue.add('pdf.case_file', { caseId: out.after.caseFile });
   }
 
+  /** Store `buf` as the account's saved signature (used by method "saved" and the Profile page). */
+  async saveUserSignature(q: Queryable, userId: string, buf: Buffer, ext: 'png' | 'jpg') {
+    const key = `users/${userId}/signature.${ext}`;
+    await this.storage.put(key, buf, `image/${ext === 'png' ? 'png' : 'jpeg'}`);
+    await q.query('UPDATE users SET signature_image_key = $2 WHERE id = $1', [userId, key]);
+    await this.audit.log({ actorId: userId, action: 'user.signature_saved', objectType: 'user', objectId: userId }, q);
+  }
+
   /** Shared by internal and external signers. Runs inside the caller's transaction. */
   async performSign(c: PoolClient, doc: any, slot: any, actor: Actor, body: any) {
     if (doc.state !== 'in_signing') throw guardError('invalid_state', 'This document is not open for signing');
     if (!body?.content_hash || body.content_hash !== doc.content_hash) throw guardError('hash_mismatch', 'The document changed since you opened it. Reload and review it again.');
     if (body.declaration_accepted !== true) throw guardError('declaration_required', 'Tick the declaration to sign', { declaration_accepted: 'required' });
     const method = body.method;
-    if (!['draw', 'type', 'upload'].includes(method)) throw badRequest('bad_method', 'method must be draw, type or upload', { method: 'invalid' });
+    if (!['draw', 'type', 'upload', 'saved'].includes(method)) throw badRequest('bad_method', 'method must be draw, type, upload or saved', { method: 'invalid' });
     let imageKey: string | null = null;
-    if (method === 'type') {
+    if (method === 'saved') {
+      // the signature saved on the signer's account is COPIED into this document, so changing it later never alters past signatures
+      const saved = actor.userId ? (await c.query('SELECT signature_image_key FROM users WHERE id = $1', [actor.userId])).rows[0]?.signature_image_key : null;
+      if (!saved) throw badRequest('no_saved_signature', 'You have no saved signature yet. Draw or upload one first.', { method: 'no saved signature' });
+      const ext = String(saved).endsWith('png') ? 'png' : 'jpg';
+      imageKey = `signatures/${doc.id}/${slot.id}.${ext}`;
+      await this.storage.put(imageKey, await this.storage.get(saved), `image/${ext === 'png' ? 'png' : 'jpeg'}`);
+    } else if (method === 'type') {
       if (!String(body.signature_text ?? '').trim()) throw badRequest('bad_signature', 'Type your name to sign', { signature_text: 'required' });
     } else {
       const m = DATA_URL.exec(body.signature_image ?? '');
@@ -291,6 +309,7 @@ export class DocumentsService {
       if (buf.length > 1024 * 1024) throw badRequest('bad_signature', 'Signature image is too large', { signature_image: 'too large' });
       imageKey = `signatures/${doc.id}/${slot.id}.${m[1] === 'png' ? 'png' : 'jpg'}`;
       await this.storage.put(imageKey, buf, `image/${m[1]}`);
+      if (body.save_signature === true && actor.userId) await this.saveUserSignature(c, actor.userId, buf, m[1] === 'png' ? 'png' : 'jpg');
     }
 
     const tpl = await this.templates.byId(doc.template_id);

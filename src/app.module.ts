@@ -7,6 +7,7 @@ import { AuditService } from './audit/audit.service';
 import { AuditController } from './audit/audit.controller';
 import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
+import { SignatureController } from './auth/signature.controller';
 import { AdminController } from './admin/admin.controller';
 import { LookupsController } from './admin/lookups.controller';
 import { TemplatesController, TemplatesService } from './templates/templates.service';
@@ -36,7 +37,7 @@ const providers = [
 @Global()
 @Module({
   controllers: [
-    HealthController, AuthController, AdminController, LookupsController, TemplatesController, CasesController, DocumentsController,
+    HealthController, AuthController, SignatureController, AdminController, LookupsController, TemplatesController, CasesController, DocumentsController,
     AttachmentsController, NotificationsController, AuditController, VerifyController, ReportsController,
   ],
   providers,

@@ -9,7 +9,7 @@ export const PR01: TemplateDef = {
   schema: { sections: [
     { key: 'request', title: 'Request', fields: [
       f.text('request_no', 'Request no.', { readonly: true, help: 'Generated when the case is created' }),
-      f.date('date_of_request', 'Date of request', req),
+      f.date('date_of_request', 'Date of request', { ...req, default: 'today' }),
       f.user('requested_by', 'Requested by', req),
       f.text('project_activity', 'Project / activity', { ...req, maxLength: 200 }),
       f.date('required_by_date', 'Required by date', req),
@@ -45,7 +45,7 @@ export const QC02: TemplateDef = {
   schema: { sections: [
     { key: 'general', title: 'General', fields: [
       f.caseRef('request_no', 'Request no.'),
-      f.date('collection_date', 'Collection date', req),
+      f.date('collection_date', 'Collection date', { ...req, default: 'today' }),
       f.text('item_service', 'Item / service', req),
     ] },
     { key: 'quotations', title: 'Quotations', description: 'Collect at least two quotations comparable in scope, specifications, taxes and delivery terms.', fields: [
@@ -83,7 +83,7 @@ export const MPV03: TemplateDef = {
     { key: 'header', title: 'Header', fields: [
       f.caseRef('procurement_request_no', 'Procurement request no.'), f.caseRef('project_activity', 'Project / activity'),
       f.caseRef('item_service', 'Item / service'), f.caseRef('requesting_staff', 'Requesting staff'),
-      f.date('mpv_date', 'Date', req), f.user('staff_assigned', 'Staff assigned', req),
+      f.date('mpv_date', 'Date', { ...req, default: 'today' }), f.user('staff_assigned', 'Staff assigned', req),
       f.text('market_location_visited', 'Market / location visited', req),
     ] },
     { key: 'spec', title: 'A. Specification lines', fields: [
@@ -133,7 +133,7 @@ export const QE03: TemplateDef = {
   schema: { sections: [
     { key: 'general', title: 'General', fields: [
       f.caseRef('request_no', 'Request no.'), f.caseRef('item_service', 'Item / service'),
-      f.date('evaluation_date', 'Evaluation date', req),
+      f.date('evaluation_date', 'Evaluation date', { ...req, default: 'today' }),
       f.caseRef('committee', 'Evaluation committee', { help: 'Requesting staff, Director of Communications, PI' }),
     ] },
     { key: 'comparison', title: 'Comparison', description: 'One row per quotation, prefilled from QC-02.', fields: [
@@ -164,7 +164,7 @@ export const PO09: TemplateDef = {
   description: 'Created only from a fully signed QE-03. Lines and supplier are copied, not retyped.',
   schema: { sections: [
     { key: 'header', title: 'Order', fields: [
-      f.text('po_number', 'PO number', { readonly: true }), f.date('issue_date', 'Issue date', req),
+      f.text('po_number', 'PO number', { readonly: true }), f.date('issue_date', 'Issue date', { ...req, default: 'today' }),
       f.caseRef('requisition_no', 'Requisition no.'), f.caseRef('project_activity', 'Project / activity'),
       f.caseRef('budget_line', 'Budget line'), f.caseRef('requested_by', 'Requested by'),
       f.radio('currency', 'Currency', ['RWF', 'USD', 'EUR'], { ...req, allow_other: true }),

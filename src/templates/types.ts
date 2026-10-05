@@ -19,7 +19,7 @@ export interface Field {
   columns?: Field[]; min_rows?: number; max_rows?: number;
   accept?: string[];
   computed?: ComputedSpec; format?: 'money';
-  default?: any;
+  default?: any;               // value for new drafts; the keyword "today" on a date field fills the creation date
   /** key of the signature slot at which this top level field is filled (e.g. the decision on IM-08). Frozen at submit otherwise. */
   fill_at?: string;
 }
