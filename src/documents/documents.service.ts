@@ -87,7 +87,7 @@ export class DocumentsService {
         edit: editor && doc.state === 'draft', submit: editor && doc.state === 'draft',
         sign, decline: sign, revise: editor && doc.state === 'returned',
         cancel: !!user && ((['draft', 'returned'].includes(doc.state) && editor) || (doc.state === 'in_signing' && !signedAny && doc.created_by === user.id) || (user.roles.includes('admin') && !['archived', 'cancelled'].includes(doc.state))),
-        edit_request: !!user && doc.state === 'in_signing' && (doc.created_by === user.id || user.roles.includes('accountant')),
+        edit_request: !!user && doc.state === 'in_signing' && (doc.created_by === user.id || user.roles.includes('accountant') || user.roles.includes('admin')),
         assign: !!user && doc.state === 'in_signing' && (doc.created_by === user.id || user.roles.includes('accountant') || user.roles.includes('admin')),
       },
     };
@@ -461,7 +461,7 @@ export class DocumentsService {
     await this.db.tx(async (c) => {
       const doc = await this.loadVisible(c, id, user, true);
       if (doc.state !== 'in_signing') throw guardError('invalid_state', 'Only a document in signing can be sent back for edits');
-      if (!(doc.created_by === user.id || user.roles.includes('accountant'))) throw forbidden();
+      if (!(doc.created_by === user.id || user.roles.includes('accountant') || user.roles.includes('admin'))) throw forbidden();
       await this.returnDoc(c, doc, await this.templates.byId(doc.template_id), user, reason.trim(), 'document.edit_requested');
     });
     await this.notify.flush();

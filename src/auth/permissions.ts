@@ -20,8 +20,10 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
   cfm: ['slot.sign', 'payment.record', 'case.view_all', 'case.advance_arrangement', 'audit.read_all', 'reports.view'],
   market_verifier: ['document.edit', 'mpv.fill', 'slot.sign', 'audit.read_own'],
   superior: ['document.edit', 'slot.sign', 'case.create', 'audit.read_own'],
-  admin: ['admin.manage', 'budget.manage', 'case.view_all', 'audit.read_all'],
+  admin: [], // every permission, filled in below
 };
+/** The administrator holds every permission any role has, plus the admin-only ones. */
+ROLE_PERMISSIONS.admin = [...new Set(['admin.manage', 'budget.manage', ...Object.values(ROLE_PERMISSIONS).flat()])].sort();
 
 /** Roles that see every case (object level rule, spec section 4) */
 export const GLOBAL_ROLES = ['pi', 'accountant', 'cfm', 'admin'];

@@ -264,6 +264,16 @@ const tok = new URL(inv.invite_link).searchParams.get('token');
 must(await call('POST', '/auth/accept-invite', null, { token: tok, password: 'A-long-password-1' }), 201, 'invitee sets a password');
 must(await call('POST', '/auth/accept-invite', null, { token: tok, password: 'A-long-password-1' }), 400, 'invite link is single use');
 
+console.log('\n== admin holds every permission');
+const adminMe = await call('GET', '/me', T.admin);
+const allPerms = ['admin.manage', 'budget.manage', 'case.create', 'case.configure', 'case.view_all', 'case.advance_arrangement', 'document.edit', 'quotation.manage', 'mpv.fill', 'po.generate', 'payment.record', 'slot.sign', 'supplier.manage', 'reports.view', 'audit.read_all', 'audit.read_own'];
+ok(allPerms.every((p) => adminMe.permissions.includes(p)), 'admin /me lists every permission');
+must(await call('GET', '/reports/spend', T.admin), 200, 'admin can read reports');
+const adminCase = must(await call('POST', '/cases', T.admin, { project: 'Admin case', budget_line_id: bl.id }), 201, 'admin can create a procurement case');
+must(await call('PATCH', `/cases/${adminCase.id}`, T.admin, { market_check_required: true }), 200, 'admin can configure a case');
+must(await call('POST', '/lookups/suppliers', T.admin, { name: `Admin supplier ${Date.now()}` }), 201, 'admin can add a supplier from a form');
+must(await call('POST', '/documents', T.admin, { doc_type: 'GR-06' }), 201, 'admin can create a GR-06 request');
+
 console.log('\n== budget lines: external funding, baseline, inline create');
 const blCode = `BL-E2E-${Date.now()}`;
 must(await call('POST', '/lookups/budget-lines', T.staff, { code: blCode }), 403, 'staff cannot create a budget line');
