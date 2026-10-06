@@ -22,5 +22,5 @@ export const EDIT_PERM: Record<string, string> = {
 };
 
 export const CASE_DOC_TYPES = ['PR-01', 'QC-02', 'MPV-03', 'QE-03', 'PO-09', 'CONTRACT', 'PA-04'];
-export const STANDALONE_DOC_TYPES = ['GR-06', 'IM-08'];
+export const STANDALONE_DOC_TYPES = ['GR-06', 'IM-08', 'TC-10'];
 export const isSigned = (state: string) => state === 'signed' || state === 'archived';

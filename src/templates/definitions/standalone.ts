@@ -115,3 +115,42 @@ export const CONTRACT: TemplateDef = {
   ],
   workflow: { guards_on_submit: ['template_valid'], guards_on_sign: ['frozen_after_sign', 'no_duplicate_signature'], requires_conflict_confirmation: false },
 };
+
+export const TC10: TemplateDef = {
+  code: 'TC-10', version: 1, title: 'Travel Clearance',
+  description: 'Completed by an AfS-Rwanda employee travelling on a work mission. The hosting institution stamps the printed clearance on arrival and departure.',
+  schema: { sections: [
+    { key: 'traveller', title: 'Traveller', fields: [
+      f.user('issued_to', 'Issued to Mr/Mrs/Ms', req), f.text('id_number', 'ID', req),
+      f.text('account_number', 'Account number', req), f.text('function', 'Function', req),
+    ] },
+    { key: 'mission', title: 'Mission', fields: [
+      f.text('program', '5. Program', req), f.budget('funding', '6. Funding (budget line)', req),
+      f.textarea('expected_results', '7. Expected results', req), f.textarea('purpose', '8. Purpose of the mission', req),
+      f.user('supervisor', '9. Supervisor who proposed the mission', { ...req, help: 'This person confirms the mission after you submit.' }),
+      f.text('destination', '10. Destination', req),
+      f.date('departure_date', '11. Date of departure', req), f.text('departure_place', '11. Place of departure', req),
+      f.date('return_date', '12. Returning date', req),
+      f.number('duration_days', '13. Duration (days)', { ...req, min: 1 }),
+      f.checks('transport', '14. Means of transport', ['Office vehicle', 'Public transport', 'Hired vehicle', 'Taxi ride', 'Air travel'], { ...req, allow_other: true }),
+      f.text('issued_at', 'Issued at', req),
+    ] },
+    { key: 'costs', title: 'Costs', description: 'Filled by the administrator at the costs step, after the supervisor confirms the mission.', fields: [
+      f.money('allowance_per_day', '15. Mission allowance per day', { required: true, fill_at: 'admin_costs' }),
+      f.money('accommodation_per_day', '16. Accommodation & incidental per day', { required: true, fill_at: 'admin_costs' }),
+      f.computed('total_amount', '17. Total amount', { op: 'add_times', fields: ['allowance_per_day', 'accommodation_per_day'], field: 'duration_days' }, { format: 'money', help: '(15 + 16) × duration', fill_at: 'admin_costs' }),
+    ] },
+    { key: 'host_visa', title: 'Visa of Hosting Institution', description: 'Left blank: the hosting institution fills this in by hand and stamps the printed clearance.', fields: [
+      f.textarea('host_authorized', 'Authorized name, signature & stamp', { readonly: true }),
+      f.text('host_arrival_date', 'Arrival date', { readonly: true }), f.text('host_departure_date', 'Departure date', { readonly: true }),
+    ] },
+  ] },
+  signature_slots: [
+    { key: 'traveller', label: 'Traveller', role: 'requesting_staff', seq: 1, declaration: 'I request this travel clearance and confirm the details are accurate.', assign: 'creator' },
+    { key: 'supervisor', label: 'Supervisor who proposed the mission', role: 'director_dept', seq: 2, declaration: 'I proposed this mission and confirm its purpose.', assign: 'field:supervisor' },
+    { key: 'admin_costs', label: 'Costs (Administrator)', role: 'admin', seq: 3, declaration: 'I entered the mission allowance and accommodation rates (items 15 to 17).' },
+    { key: 'funding_check', label: 'Funding check (Accountant)', role: 'accountant', seq: 4, declaration: 'I checked the funding line and the amounts.' },
+    { key: 'approved_by', label: 'Approved by', role: 'pi', seq: 5, declaration: 'I approve this mission.' },
+  ],
+  workflow: { guards_on_submit: ['template_valid', 'travel_clearance_valid'], guards_on_sign: ['frozen_after_sign', 'no_duplicate_signature'], requires_conflict_confirmation: false },
+};

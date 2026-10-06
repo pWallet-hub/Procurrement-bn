@@ -26,7 +26,8 @@ Roles: `requesting_staff, accountant, director_comms, director_dept, pi, cfm, ma
 
 ## Lookups (any signed-in user)
 `GET /lookups/users`, `/lookups/suppliers`, `/lookups/budget-lines`, `/lookups/departments` -> `{items:[...]}` (no pagination).
-- user: `{id, full_name, position, email, roles}`; supplier: `{id, name, tin_or_reg_no, contact_person, phone, email, address}`; budget line: `{id, code, project, available, currency}`.
+- user: `{id, full_name, position, email, roles}`; supplier: `{id, name, tin_or_reg_no, contact_person, phone, email, address}`; budget line: `{id, code, project, funding_source: internal|external, funder, baseline, available, currency}`.
+`POST /lookups/budget-lines` (permission `budget.manage`) body `{code, project?, funding_source?, funder? (required when external), baseline?, available? (defaults to baseline), currency?}` -> budget line; used by the "New budget line" button in form budget pickers.
 - `POST /lookups/suppliers` (accountant) creates a supplier (used while filling QC-02).
 
 ## Templates (the form renderer input)
@@ -124,7 +125,7 @@ Use `document.can.*` to show/hide buttons - never re-derive permissions in the c
 
 ## Admin (role `admin`)
 `GET|POST /admin/users`, `PATCH /admin/users/{id}` (full_name, position, department_id, roles, active), `POST /admin/users/{id}/reset-password`, `POST /admin/users/{id}/reset-totp`;
-`GET|POST|PATCH /admin/departments`, `/admin/budget-lines`, `/admin/suppliers`; `GET /admin/templates`.
+`GET|POST|PATCH /admin/departments`, `/admin/budget-lines` (permission `budget.manage`, held by admin), `/admin/suppliers`; `GET /admin/templates`.
 `POST /admin/users` body `{email, full_name, position, department_id, roles[]}` -> `{user, invite_link}` (`invite_link` only returned outside production).
 
 ## Dev seed accounts (password `Passw0rd!dev`, no TOTP in dev)

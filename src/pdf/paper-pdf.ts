@@ -89,7 +89,8 @@ export function renderPaper(c: PaperCtx): Promise<PDFKit.PDFDocument> {
     const lw3 = W * 0.3, vw = W - lw3;
     const lh = h(f.label, lw3 - 10, 8, true);
     const vh = valueHeight(f, v, vw - 10);
-    const hh = Math.max(lh, vh) + 8;
+    // an empty read-only text box is filled by hand on the printout (e.g. the TC-10 host stamp): leave room for it
+    const hh = Math.max(lh, vh, f.type === 'textarea' && f.readonly && !v ? 70 : 0) + 8;
     need(hh);
     cell(M, y, lw3, hh, GREY); text(f.label, M + 5, y + 4, { size: 8, bold: true, width: lw3 - 10 });
     cell(M + lw3, y, vw, hh);

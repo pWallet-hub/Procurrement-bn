@@ -3,6 +3,7 @@ import { AuthUser, CurrentUser, Perm } from '../common/auth';
 import { Db } from '../db/db.service';
 import { AuditService } from '../audit/audit.service';
 import { validationError } from '../common/errors';
+import { BUDGET_ROW, createBudgetLine } from './budget-lines';
 
 @Controller('lookups')
 export class LookupsController {
@@ -13,7 +14,7 @@ export class LookupsController {
     return { items: r.rows };
   }
   @Get('suppliers') async suppliers() { return { items: (await this.db.query('SELECT id, name, tin_or_reg_no, contact_person, phone, email, address FROM suppliers WHERE active ORDER BY name')).rows }; }
-  @Get('budget-lines') async budget() { return { items: (await this.db.query('SELECT id, code, project, available::float8 AS available, currency FROM budget_lines WHERE active ORDER BY code')).rows }; }
+  @Get('budget-lines') async budget() { return { items: (await this.db.query(`SELECT ${BUDGET_ROW} FROM budget_lines WHERE active ORDER BY code`)).rows }; }
   @Get('departments') async departments() { return { items: (await this.db.query('SELECT id, name FROM departments ORDER BY name')).rows }; }
 
   /** QC-02: the Accountant creates a supplier record when a quoting supplier is new */
@@ -25,4 +26,8 @@ export class LookupsController {
     await this.audit.log({ actorId: u.id, action: 'supplier.created', objectType: 'supplier', objectId: r.id, detail: { name: r.name } });
     return r;
   }
+
+  /** Create a budget line from a form's budget picker when the needed line does not exist yet */
+  @Post('budget-lines') @Perm('budget.manage')
+  async createBudgetLine(@CurrentUser() u: AuthUser, @Body() b: any) { return createBudgetLine(this.db, this.audit, u, b); }
 }

@@ -77,8 +77,8 @@ export async function seed(): Promise<void> {
            ON CONFLICT (email) DO UPDATE SET full_name = $2, position = $3 RETURNING id`, [email, name, position, deps[dep], hash]);
         for (const r of roles) await pool.query('INSERT INTO user_roles (user_id, role_code) VALUES ($1,$2) ON CONFLICT DO NOTHING', [u.rows[0].id, r]);
       }
-      for (const [code, project, available] of [['BL-001', 'OFAB Rwanda Chapter', 25_000_000], ['BL-002', 'Communications Campaign', 12_000_000], ['BL-003', 'Field Activities', 8_000_000]] as const) {
-        await pool.query('INSERT INTO budget_lines (code, project, available) VALUES ($1,$2,$3) ON CONFLICT (code) DO NOTHING', [code, project, available]);
+      for (const [code, project, available, source, funder] of [['BL-001', 'OFAB Rwanda Chapter', 25_000_000, 'external', 'OFAB / AATF'], ['BL-002', 'Communications Campaign', 12_000_000, 'internal', null], ['BL-003', 'Field Activities', 8_000_000, 'internal', null]] as const) {
+        await pool.query('INSERT INTO budget_lines (code, project, available, baseline, funding_source, funder) VALUES ($1,$2,$3,$3,$4,$5) ON CONFLICT (code) DO NOTHING', [code, project, available, source, funder]);
       }
       if (!(await pool.query('SELECT 1 FROM suppliers LIMIT 1')).rowCount) {
         for (const s of [['Kigali Print House Ltd', '102345678', 'Jean Mugabo', '+250788000001', 'sales@kigaliprint.example', 'KN 4 Ave, Kigali'], ['Umubano Supplies', '102998877', 'Grace Uwase', '+250788000002', 'info@umubano.example', 'KG 11 Ave, Kigali'], ['Hills Events & Media', '103112233', 'Eric Habimana', '+250788000003', 'hello@hills.example', 'KK 15 Rd, Kigali']]) {

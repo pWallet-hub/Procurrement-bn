@@ -6,7 +6,7 @@ Read this file first, then `docs/API-CONTRACT.md`, then the spec (`docs/AfS Rwan
 ## 1. What this is
 
 A web system that digitises AfS-Rwanda's procurement paper forms and signing workflow:
-nine forms (PR-01, QC-02, MPV-03, QE-03, PO-09, PA-04, GR-06, IM-08, supplier contract) are versioned **templates stored as data**; each purchase is a **Case** that moves through fixed stages with named rules (guards); every document is **frozen and hashed on submit**, signed in order (draw / type / upload / saved signature, or a single-use link for the external supplier), and every action goes into a **hash-chained, append-only audit log**. Signed documents are rendered to PDFs that look like the printed forms.
+ten forms (PR-01, QC-02, MPV-03, QE-03, PO-09, PA-04, GR-06, IM-08, TC-10 travel clearance, supplier contract) are versioned **templates stored as data**; each purchase is a **Case** that moves through fixed stages with named rules (guards); every document is **frozen and hashed on submit**, signed in order (draw / type / upload / saved signature, or a single-use link for the external supplier), and every action goes into a **hash-chained, append-only audit log**. Signed documents are rendered to PDFs that look like the printed forms.
 
 Roles: requesting_staff, accountant, director_comms, director_dept, pi, cfm, market_verifier, superior, admin (+ external supplier by token).
 
@@ -45,7 +45,7 @@ Frontend map (`Procurrement-fn/src`): `api/` (typed client), `auth/`, `ui/` (pri
 
 ## 4. Key design rules (do not break these)
 
-1. **Forms are data.** Change a form in `templates/definitions/*`, then **bump `VERSION` in `definitions/index.ts`** (currently 4). Seed never rewrites a version already used by documents; old documents keep their version.
+1. **Forms are data.** Change a form in `templates/definitions/*`, then **bump `VERSION` in `definitions/index.ts`** (currently 6). Seed never rewrites a version already used by documents; old documents keep their version.
 2. **Frozen after submit.** Document data cannot change after `submit`; `content_hash` = SHA-256 of `{template, version, data, attachment hashes}`. Fields with `fill_at: "<slotKey>"` (IM-08 decision, GR-06 finance action) are filled at that signature and stored with it, outside the hash.
 3. **All audit writes go through `AuditService.log`**, which takes an advisory lock inside a transaction. A past bug (writes outside a transaction) forked the chain; fixed, covered by the e2e concurrency step. Never write to `audit_events` any other way. DB triggers block UPDATE/DELETE.
 4. **Guards return HTTP 422** with `{error:{code,message,fields}}`; all errors use that one shape.
@@ -83,7 +83,7 @@ Mailpit (dev inbox) shows every e-mail, invite and supplier signing link.
 ```bash
 cd Procurrement-bn
 npm test                                                     # 11 unit tests
-API=http://localhost:3100/api/v1 MAILPIT_PORT=8125 COMPOSE_DIR=$PWD node scripts/e2e.mjs   # 124 checks; full case PR-01 -> closed + contract + IM-08 + saved signature + tamper + audit concurrency
+API=http://localhost:3100/api/v1 MAILPIT_PORT=8125 COMPOSE_DIR=$PWD node scripts/e2e.mjs   # 146 checks; full case PR-01 -> closed + contract + IM-08 + saved signature + tamper + audit concurrency + budget lines + TC-10
 ```
 e2e flags: `E2E_REMOTE=1` (against a deployed server: skips steps needing local Mailpit/Docker), `E2E_SOFT=1` (continue after failures and summarise), `COMPOSE_DIR` (folder whose compose project holds Postgres, used for the tamper test). **It creates test data**: only run against demo/test databases.
 
@@ -143,7 +143,7 @@ State when last tested (2026-10-05):
 
 1. Clone both repos (`Procurrement-bn`, `Procurrement-fn`) next to each other. Read `Procurrement-bn/docs/HANDOFF.md` (this file) and `docs/API-CONTRACT.md`.
 2. Install Docker, Node 22+. Start the backend (section 5). Check `/api/v1/health`.
-3. Run `npm test` and `scripts/e2e.mjs` (expect `ALL GOOD: 124 checks passed`).
+3. Run `npm test` and `scripts/e2e.mjs` (expect `ALL GOOD: 146 checks passed`).
 4. Start the frontend, sign in as `staff@afs.local`, create a case, and walk it through with the demo accounts.
 5. Pick up the backlog from section 9, starting with production go-live.
 

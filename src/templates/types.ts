@@ -5,10 +5,10 @@ export type FieldType =
 export interface Condition { field: string; equals?: any; includes?: string; truthy?: boolean }
 
 export interface ComputedSpec {
-  op: 'mul' | 'sum_rows' | 'sum_mul' | 'add' | 'variance_mid';
-  fields?: string[];        // mul: row columns · add: top level fields · variance_mid: [amountColumn, lowField, highField]
+  op: 'mul' | 'sum_rows' | 'sum_mul' | 'add' | 'add_times' | 'variance_mid';
+  fields?: string[];        // mul: row columns · add / add_times: top level fields · variance_mid: [amountColumn, lowField, highField]
   table?: string;           // sum_rows / sum_mul: table key
-  field?: string;           // sum_rows: column to add up
+  field?: string;           // sum_rows: column to add up · add_times: top level number the sum is multiplied by
 }
 
 export interface Field {
@@ -28,7 +28,8 @@ export interface Section { key: string; title: string; description?: string; fie
 
 export interface SlotDef {
   key: string; label: string; role: string; seq: number; group?: string; declaration: string;
-  assign?: 'creator' | 'case_requester'; external?: boolean;
+  /** who signs: the creator, the case requester, or the user picked in a user_ref field (`field:<key>`); otherwise anyone with the role */
+  assign?: 'creator' | 'case_requester' | `field:${string}`; external?: boolean;
 }
 
 export interface WorkflowDef {

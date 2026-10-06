@@ -110,3 +110,10 @@ export function pickKnown(tpl: Pick<TemplateDef, 'schema'>, data: Record<string,
   for (const s of tpl.schema.sections) for (const f of s.fields) { keys.add(f.key); if (f.allow_other) keys.add(`${f.key}_other`); }
   return Object.fromEntries(Object.entries(data).filter(([k]) => keys.has(k)));
 }
+
+/** Drop fields filled at a later signature slot (and their "other" text): only that slot's signer sets them, at signing. */
+export function withoutFillAt(tpl: Pick<TemplateDef, 'schema'>, data: Record<string, any>): Record<string, any> {
+  const later = new Set<string>();
+  for (const s of tpl.schema.sections) for (const f of s.fields) if (f.fill_at) { later.add(f.key); later.add(`${f.key}_other`); }
+  return Object.fromEntries(Object.entries(data).filter(([k]) => !later.has(k)));
+}

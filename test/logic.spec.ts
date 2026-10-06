@@ -1,5 +1,5 @@
 import { applyComputed } from '../src/templates/computed';
-import { validateData } from '../src/templates/validate';
+import { validateData, withoutFillAt } from '../src/templates/validate';
 import { canonical, documentHash } from '../src/common/hash';
 import { eventHash } from '../src/audit/audit.service';
 import { ALL_TEMPLATES } from '../src/templates/definitions';
@@ -28,6 +28,27 @@ describe('templates', () => {
   it('computes MPV-03 variance against the range midpoint', () => {
     const d = applyComputed(tpl('MPV-03'), { price_range_low: { amount: 80, currency: 'RWF' }, price_range_high: { amount: 120, currency: 'RWF' }, comparisons: [{ quotation_amount: { amount: 130, currency: 'RWF' } }] });
     expect(d.comparisons[0].variance.amount).toBe(30);
+  });
+});
+
+describe('travel clearance (TC-10)', () => {
+  it('total = (allowance + accommodation) per day × duration', () => {
+    const d = applyComputed(tpl('TC-10'), { allowance_per_day: { amount: 20000, currency: 'RWF' }, accommodation_per_day: { amount: 30000, currency: 'RWF' }, duration_days: 3 });
+    expect(d.total_amount).toEqual({ amount: 150000, currency: 'RWF' });
+  });
+  it('items 15 to 17 belong to the admin step: skipped at submit, required when the admin signs, never set by the requester', () => {
+    const t = tpl('TC-10');
+    expect(t.signature_slots.find((x) => x.key === 'admin_costs')?.role).toBe('admin');
+    const atSubmit = validateData(t, {}, true);
+    expect(atSubmit.allowance_per_day).toBeUndefined();
+    expect(atSubmit.program).toBe('required');
+    expect(validateData(t, {}, true, 'admin_costs').allowance_per_day).toBe('required');
+    expect(withoutFillAt(t, { program: 'p', allowance_per_day: 1, total_amount: 2 })).toEqual({ program: 'p' });
+  });
+  it('rejects a return before departure and a supervisor who is the traveller', () => {
+    expect(() => GUARDS.travel_clearance_valid({ data: { departure_date: '2026-10-10', return_date: '2026-10-09' } } as any)).toThrow();
+    expect(() => GUARDS.travel_clearance_valid({ data: { issued_to: 'u1', supervisor: 'u1' } } as any)).toThrow();
+    expect(() => GUARDS.travel_clearance_valid({ data: { departure_date: '2026-10-10', return_date: '2026-10-10', issued_to: 'u1', supervisor: 'u2' } } as any)).not.toThrow();
   });
 });
 

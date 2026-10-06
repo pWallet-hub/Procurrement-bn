@@ -8,7 +8,7 @@ import { canonical, documentHash, randomToken, sha256 } from '../common/hash';
 import { accessParams, docVisible } from '../common/access';
 import { TemplatesService, TemplateRow } from '../templates/templates.service';
 import { applyComputed } from '../templates/computed';
-import { collectFileIds, pickKnown, validateData } from '../templates/validate';
+import { collectFileIds, pickKnown, validateData, withoutFillAt } from '../templates/validate';
 import { SlotDef } from '../templates/types';
 import { runGuards } from '../workflow/guards';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -125,12 +125,12 @@ export class DocumentsService {
     const tpl = await this.templates.active(docType);
     const c = caseId ? await loadCaseCtx(q, caseId) : null;
     const dep = user.department_id ? (await q.query('SELECT name FROM departments WHERE id = $1', [user.department_id])).rows[0]?.name : null;
-    const pre = await prefill(q, docType, c, { id: user.id, department: dep });
+    const pre = await prefill(q, docType, c, { id: user.id, department: dep, position: user.position });
     // date fields marked default:"today" start with the creation date (the person can still change it)
     const todayStr = new Date().toISOString().slice(0, 10);
     const dateDefaults = Object.fromEntries(tpl.schema.sections.flatMap((sec: any) => sec.fields).filter((f: any) => f.type === 'date' && f.default === 'today').map((f: any) => [f.key, todayStr]));
-    const merged = pickKnown(tpl as any, { ...dateDefaults, ...pre, ...initial });
-    const data = applyComputed(tpl as any, await deriveAuto(q, docType, merged, c));
+    const merged = pickKnown(tpl as any, { ...dateDefaults, ...pre, ...withoutFillAt(tpl, initial) });
+    const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(q, docType, merged, c)));
     const doc = (await q.query(
       `INSERT INTO documents (case_id, template_id, doc_type, data, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
       [caseId, tpl.id, docType, JSON.stringify(data), user.id])).rows[0];
@@ -139,7 +139,7 @@ export class DocumentsService {
   }
 
   async createStandalone(user: AuthUser, docType: string, data: Record<string, any> | undefined) {
-    if (!STANDALONE_DOC_TYPES.includes(docType)) throw badRequest('bad_doc_type', 'Only GR-06 and IM-08 can be created outside a case');
+    if (!STANDALONE_DOC_TYPES.includes(docType)) throw badRequest('bad_doc_type', `Only ${STANDALONE_DOC_TYPES.join(', ')} can be created outside a case`);
     if (!user.permissions.includes('case.create') && !user.permissions.includes('document.edit')) throw forbidden();
     const doc = await this.createDraft(this.db, docType, null, user, data ?? {});
     return this.dto(doc, user, validateData(await this.templates.active(docType) as any, doc.data, false));
@@ -173,7 +173,7 @@ export class DocumentsService {
       // readonly (server controlled) fields cannot be overwritten by the client
       const ro = new Set(tpl.schema.sections.flatMap((s: any) => s.fields).filter((f: any) => f.readonly || f.type === 'case_ref' || f.type === 'computed').map((f: any) => f.key));
       for (const k of Object.keys(known)) if (ro.has(k)) delete known[k];
-      const data = applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, { ...doc.data, ...known }, cc));
+      const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, { ...doc.data, ...withoutFillAt(tpl, known) }, cc)));
       const errors = validateData(tpl as any, data, false);
       const upd = (await c.query('UPDATE documents SET data = $2, updated_at = now() WHERE id = $1 RETURNING *', [id, JSON.stringify(data)])).rows[0];
       return { upd, errors };
@@ -192,7 +192,7 @@ export class DocumentsService {
       const tpl = await this.templates.byId(doc.template_id);
       const cc = doc.case_id ? await loadCaseCtx(c, doc.case_id) : null;
       const caseRow = doc.case_id ? (await c.query('SELECT * FROM cases WHERE id = $1', [doc.case_id])).rows[0] : null;
-      const data = applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, pickKnown(tpl as any, doc.data), cc));
+      const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, pickKnown(tpl as any, doc.data), cc)));
       await runGuards(tpl.workflow.guards_on_submit, { q: c, tpl, doc, data, caseRow, actorId: user.id });
 
       const fileIds = collectFileIds(tpl as any, data);
@@ -205,7 +205,8 @@ export class DocumentsService {
 
       const created: any[] = [];
       for (const s of slotDefs) {
-        const assigned = s.assign === 'creator' ? doc.created_by : s.assign === 'case_requester' ? (caseRow?.requested_by ?? doc.created_by) : null;
+        const assigned = s.assign === 'creator' ? doc.created_by : s.assign === 'case_requester' ? (caseRow?.requested_by ?? doc.created_by)
+          : s.assign?.startsWith('field:') ? (data[s.assign.slice(6)] ?? null) : null;
         const r = await c.query(
           `INSERT INTO signature_slots (document_id, slot_key, label, role_code, seq, grp, declaration, assigned_user_id, external_email, status)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
@@ -322,7 +323,10 @@ export class DocumentsService {
     const fillFields = tpl.schema.sections.flatMap((s: any) => s.fields).filter((f: any) => f.fill_at === slot.slot_key);
     if (fillFields.length) {
       const incoming = pickKnown(tpl as any, body.data ?? {});
-      slotData = applyComputed(tpl as any, Object.fromEntries(fillFields.filter((f: any) => incoming[f.key] !== undefined || incoming[`${f.key}_other`] !== undefined).flatMap((f: any) => [[f.key, incoming[f.key]], [`${f.key}_other`, incoming[`${f.key}_other`]]]).filter(([, v]: any) => v !== undefined)));
+      const entered = Object.fromEntries(fillFields.filter((f: any) => f.type !== 'computed').flatMap((f: any) => [[f.key, incoming[f.key]], [`${f.key}_other`, incoming[`${f.key}_other`]]]).filter(([, v]: any) => v !== undefined));
+      // computed fields filled at this slot (e.g. the TC-10 total) use the whole document plus what the signer entered
+      const full = applyComputed(tpl as any, { ...merged, ...entered });
+      slotData = { ...entered, ...Object.fromEntries(fillFields.filter((f: any) => f.type === 'computed').map((f: any) => [f.key, full[f.key]])) };
       const errors = validateData(tpl as any, { ...merged, ...slotData }, true, slot.slot_key);
       if (Object.keys(errors).length) throw validationError(errors);
     }

@@ -264,5 +264,50 @@ const tok = new URL(inv.invite_link).searchParams.get('token');
 must(await call('POST', '/auth/accept-invite', null, { token: tok, password: 'A-long-password-1' }), 201, 'invitee sets a password');
 must(await call('POST', '/auth/accept-invite', null, { token: tok, password: 'A-long-password-1' }), 400, 'invite link is single use');
 
+console.log('\n== budget lines: external funding, baseline, inline create');
+const blCode = `BL-E2E-${Date.now()}`;
+must(await call('POST', '/lookups/budget-lines', T.staff, { code: blCode }), 403, 'staff cannot create a budget line');
+const noFunder = await call('POST', '/admin/budget-lines', T.admin, { code: blCode, funding_source: 'external' });
+ok(noFunder.http === 422 && !!noFunder.error.fields.funder, 'an external budget line needs a funder');
+const extBl = must(await call('POST', '/lookups/budget-lines', T.admin, { code: blCode, project: 'Donor project', funding_source: 'external', funder: 'Gates Foundation', baseline: 5_000_000 }), 201, 'admin creates an external budget line from a form picker');
+ok(extBl.baseline === 5_000_000 && extBl.available === 5_000_000 && extBl.funder === 'Gates Foundation', 'new line starts with available = baseline');
+must(await call('POST', '/admin/budget-lines', T.admin, { code: blCode }), 422, 'budget line codes are unique');
+const blPatched = must(await call('PATCH', `/admin/budget-lines/${extBl.id}`, T.admin, { available: 4_200_000 }), 200, 'admin updates the available balance');
+ok(blPatched.baseline === 5_000_000 && blPatched.available === 4_200_000, 'baseline kept when available changes');
+ok((await call('GET', '/lookups/budget-lines', T.staff)).items.some((b) => b.id === extBl.id && b.funding_source === 'external'), 'lookup shows the funding source');
+
+console.log('\n== TC-10 travel clearance');
+const dirDept = await login('director.dept');
+const dirMe = await call('GET', '/me', dirDept);
+const tcBase = {
+  id_number: '1199080012345678', account_number: '000-123-456', program: 'OFAB Rwanda', funding: extBl.id,
+  expected_results: 'Partners briefed', purpose: 'Field visit', supervisor: dirMe.id, destination: 'Musanze',
+  departure_date: '2026-11-02', departure_place: 'Kigali', return_date: '2026-11-04', duration_days: 3, transport: ['office_vehicle'],
+};
+let tc = must(await call('POST', '/documents', T.staff, { doc_type: 'TC-10', data: { ...tcBase, allowance_per_day: money(99_999) } }), 201, 'staff creates a TC-10 draft');
+ok(tc.data.issued_to === me.id && tc.data.issued_at === 'Kigali', 'traveller and place of issue prefilled');
+ok(tc.data.allowance_per_day === undefined && tc.data.total_amount === undefined, 'requester cannot set the allowance or total at create');
+must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { accommodation_per_day: money(1), return_date: '2026-11-01' } }), 200, 'save a return date before departure');
+ok((await getDoc(tc.id, T.staff)).data.accommodation_per_day === undefined, 'requester cannot set accommodation on save');
+const badDates = await call('POST', `/documents/${tc.id}/submit`, T.staff);
+ok(badDates.http === 422 && badDates.error.code === 'guard.travel_clearance_valid', 'submit rejects a return before departure');
+must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { return_date: '2026-11-04' } }), 200, 'fix the return date');
+tc = must(await call('POST', `/documents/${tc.id}/submit`, T.staff), 201, 'submit TC-10 without costs');
+must(await sign(tc.id, 'traveller', T.staff, tc), 201, 'traveller signs');
+tc = await getDoc(tc.id, T.staff);
+ok(tc.slots.find((s) => s.slot_key === 'supervisor')?.assigned_user?.id === dirMe.id, 'supervisor slot goes to the person named on the form');
+ok([403, 404].includes((await sign(tc.id, 'supervisor', T['director.comms'], tc)).http), 'another director cannot sign for the supervisor');
+must(await sign(tc.id, 'supervisor', dirDept, tc), 201, 'supervisor signs');
+ok((await call('GET', '/signing/tasks', T.admin)).items.some((t) => t.document_id === tc.id && t.slot_key === 'admin_costs'), 'costs step is in the admin task list');
+must(await sign(tc.id, 'admin_costs', T.accountant, tc, { data: { allowance_per_day: money(20_000), accommodation_per_day: money(30_000) } }), 403, 'only the admin fills the costs step');
+const noCosts = await sign(tc.id, 'admin_costs', T.admin, tc);
+ok(noCosts.http === 422 && !!noCosts.error.fields.allowance_per_day, 'admin must enter the allowance and accommodation');
+must(await sign(tc.id, 'admin_costs', T.admin, tc, { data: { allowance_per_day: money(20_000), accommodation_per_day: money(30_000), total_amount: money(1) } }), 201, 'admin enters items 15 and 16 and signs');
+tc = await getDoc(tc.id, T.staff);
+ok(tc.data.allowance_per_day?.amount === 20_000 && tc.data.total_amount?.amount === 150_000, 'total = (allowance + accommodation) x days, computed by the server');
+must(await sign(tc.id, 'funding_check', T.accountant, tc), 201, 'accountant checks funding');
+must(await sign(tc.id, 'approved_by', T.pi, tc), 201, 'PI approves');
+ok((await getDoc(tc.id, T.staff)).state === 'signed', 'TC-10 fully signed');
+
 if (failures.length) { console.log(`\n${passed} passed, ${failures.length} FAILED:`); failures.forEach((f) => console.log(' -', f)); process.exit(1); }
 console.log(`\nALL GOOD: ${passed} checks passed`);

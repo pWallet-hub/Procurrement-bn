@@ -121,6 +121,12 @@ export const GUARDS: Record<string, Guard> = {
     if (amt(data.price_range_low) > amt(data.price_range_high)) throw guardError('price_range_ordered', 'Price range low cannot be above high', { price_range_low: 'above high' });
   },
 
+  /** TC-10: return not before departure; the proposing supervisor is someone other than the traveller */
+  travel_clearance_valid: ({ data }) => {
+    if (data.return_date && data.departure_date && data.return_date < data.departure_date) throw guardError('travel_clearance_valid', 'The returning date cannot be before the departure date', { return_date: 'before departure' });
+    if (data.supervisor && data.supervisor === data.issued_to) throw guardError('travel_clearance_valid', 'The supervisor who proposed the mission must be someone other than the traveller', { supervisor: 'same as traveller' });
+  },
+
   /** Enforced by the data layer (documents.state check), listed so templates stay self documenting */
   frozen_after_sign: () => undefined,
   no_duplicate_signature: () => undefined,

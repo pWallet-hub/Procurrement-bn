@@ -28,9 +28,10 @@ const supplierOf = async (q: Queryable, id: string | null) =>
   id ? (await q.query('SELECT * FROM suppliers WHERE id = $1', [id])).rows[0] : null;
 
 /** Values copied from the case and earlier documents when a draft is created (spec section 5: `case.*`, copied not retyped). */
-export async function prefill(q: Queryable, docType: string, c: CaseCtx | null, actor: { id: string; department?: string | null }): Promise<Record<string, any>> {
+export async function prefill(q: Queryable, docType: string, c: CaseCtx | null, actor: { id: string; department?: string | null; position?: string | null }): Promise<Record<string, any>> {
   if (!c) {
     if (docType === 'IM-08') return { date_submitted: today(), version: '1.0', department_office: actor.department ?? undefined };
+    if (docType === 'TC-10') return { issued_to: actor.id, function: actor.position ?? undefined, issued_at: 'Kigali' };
     return {};
   }
   const pr = await latest(q, c.id, 'PR-01');

@@ -7,6 +7,7 @@ import { badRequest, notFound, validationError } from '../common/errors';
 import { ROLES } from '../auth/permissions';
 import { config } from '../config/config';
 import { TemplatesService } from '../templates/templates.service';
+import { BUDGET_ROW, budgetLineErrors, createBudgetLine } from './budget-lines';
 
 const USER_ROW = `u.id, u.email, u.full_name, u.position, u.department_id, u.active, u.totp_enabled, (u.password_hash IS NOT NULL) AS has_password,
   COALESCE((SELECT array_agg(role_code ORDER BY role_code) FROM user_roles WHERE user_id = u.id), '{}') AS roles`;
@@ -80,15 +81,18 @@ export class AdminController {
     await this.audit.log({ actorId: a.id, action: 'admin.department_updated', objectType: 'department', objectId: id }); return r;
   }
 
-  @Get('budget-lines') async bl() { return { items: (await this.db.query('SELECT id, code, project, available::float8 AS available, currency, active FROM budget_lines ORDER BY code')).rows }; }
-  @Post('budget-lines') async addBl(@CurrentUser() a: AuthUser, @Body() b: any) {
-    if (!b?.code) throw validationError({ code: 'required' });
-    const r = await this.db.one('INSERT INTO budget_lines (code, project, available, currency) VALUES ($1,$2,$3,$4) RETURNING id, code, project, available::float8 AS available, currency, active', [b.code, b.project ?? null, b.available ?? 0, b.currency ?? 'RWF']);
-    await this.audit.log({ actorId: a.id, action: 'admin.budget_line_created', objectType: 'budget_line', objectId: r.id }); return r;
-  }
-  @Patch('budget-lines/:id') async patchBl(@CurrentUser() a: AuthUser, @Param('id') id: string, @Body() b: any) {
-    const r = await this.db.one('UPDATE budget_lines SET project = COALESCE($2, project), available = COALESCE($3, available), currency = COALESCE($4, currency), active = COALESCE($5, active) WHERE id = $1 RETURNING id, code, project, available::float8 AS available, currency, active', [id, b?.project ?? null, b?.available ?? null, b?.currency ?? null, b?.active ?? null]);
+  @Get('budget-lines') @Perm('budget.manage') async bl() { return { items: (await this.db.query(`SELECT ${BUDGET_ROW} FROM budget_lines ORDER BY code`)).rows }; }
+  @Post('budget-lines') @Perm('budget.manage') async addBl(@CurrentUser() a: AuthUser, @Body() b: any) { return createBudgetLine(this.db, this.audit, a, b); }
+  @Patch('budget-lines/:id') @Perm('budget.manage') async patchBl(@CurrentUser() a: AuthUser, @Param('id') id: string, @Body() b: any) {
+    const errors = budgetLineErrors(b, false);
+    if (Object.keys(errors).length) throw validationError(errors);
+    const r = await this.db.one(
+      `UPDATE budget_lines SET project = COALESCE($2, project), available = COALESCE($3, available), currency = COALESCE($4, currency), active = COALESCE($5, active),
+         funding_source = COALESCE($6, funding_source), funder = CASE WHEN COALESCE($6, funding_source) = 'internal' THEN NULL ELSE COALESCE($7, funder) END, baseline = COALESCE($8, baseline)
+       WHERE id = $1 RETURNING ${BUDGET_ROW}`,
+      [id, b?.project ?? null, b?.available ?? null, b?.currency ?? null, b?.active ?? null, b?.funding_source || null, b?.funder || null, b?.baseline ?? null]);
     if (!r) throw notFound('budget line');
+    if (r.funding_source === 'external' && !r.funder) throw validationError({ funder: 'required for an external budget' });
     await this.audit.log({ actorId: a.id, action: 'admin.budget_line_updated', objectType: 'budget_line', objectId: id, detail: b }); return r;
   }
 

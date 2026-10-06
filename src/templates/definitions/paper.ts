@@ -31,6 +31,8 @@ export const PAPER: Record<string, PaperMeta> = {
     intro: "Purpose: To formally document an internal operational/workplace issue requiring management attention, the initiating staff member's recommendation, the superior's guidance and decision, and the staff responsible for follow-up action.",
     signoff_title: 'Signatures',
     notes: 'A single-source decision should be supported by the attached justification. This memo does not replace procurement, finance, HR, contracting or safeguarding approvals.' }),
+  'TC-10': form({ form_label: 'TC-10', title: 'TRAVEL CLEARANCE', date_label: 'Date', footer: 'Alliance for Science Rwanda | Kigali - Rwanda',
+    intro: 'To be completed by AfSRw employee travelling on work mission.', signoff_title: 'Approval', signoff_before: 'host_visa' }),
   CONTRACT: { layout: 'contract', form_label: 'CONTRACT', org: ORG, version: '1.0', date_label: 'Date',
     title: 'FINANCIAL CONTRACT FOR THE PROVISION OF EVENT MANAGEMENT SERVICE TOOLS, COMMUNICATION MATERIALS, AND OTHER SUPPLIES',
     footer: 'Street: KK 655 ST, District: KICUKIRO, City of Kigali | Tel: +250 788 667 469 | Email: rwandaafs@gmail.com | Website: www.afs-rwanda.org',

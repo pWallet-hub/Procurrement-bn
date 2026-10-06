@@ -20,7 +20,7 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
   cfm: ['slot.sign', 'payment.record', 'case.view_all', 'case.advance_arrangement', 'audit.read_all', 'reports.view'],
   market_verifier: ['document.edit', 'mpv.fill', 'slot.sign', 'audit.read_own'],
   superior: ['document.edit', 'slot.sign', 'case.create', 'audit.read_own'],
-  admin: ['admin.manage', 'case.view_all', 'audit.read_all'],
+  admin: ['admin.manage', 'budget.manage', 'case.view_all', 'audit.read_all'],
 };
 
 /** Roles that see every case (object level rule, spec section 4) */
