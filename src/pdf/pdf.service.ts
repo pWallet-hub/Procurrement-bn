@@ -48,8 +48,9 @@ export class PdfService {
     const tpl = await this.templates.byId(doc.template_id);
     const cs = doc.case_id ? await this.db.one('SELECT request_no FROM cases WHERE id = $1', [doc.case_id]) : null;
     const slots = (await this.db.query(
-      `SELECT s.*, g.signer_name, g.signed_at, g.ip, g.method, g.signature_image_key, g.signature_text, g.document_hash, g.slot_data
-       FROM signature_slots s LEFT JOIN signatures g ON g.slot_id = s.id WHERE s.document_id = $1 AND s.voided_at IS NULL ORDER BY s.seq, s.slot_key`, [docId])).rows;
+      `SELECT s.*, g.signer_name, g.signed_at, g.ip, g.method, g.signature_image_key, g.signature_text, g.document_hash, g.slot_data,
+              COALESCE(g.slot_data->>'_signer_position', su.position) AS signer_position
+       FROM signature_slots s LEFT JOIN signatures g ON g.slot_id = s.id LEFT JOIN users su ON su.id = g.signer_user_id WHERE s.document_id = $1 AND s.voided_at IS NULL ORDER BY s.seq, s.slot_key`, [docId])).rows;
     let data = { ...doc.data };
     for (const s of slots.filter((x) => x.slot_data && x.status === 'signed')) data = { ...data, ...Object.fromEntries(Object.entries(s.slot_data).filter(([k]) => !k.startsWith('_'))) };
     const lk = await this.lookups();
@@ -62,7 +63,7 @@ export class PdfService {
     for (const s of slots) {
       let image: Buffer | null = null;
       if (s.signature_image_key) { try { image = await this.storage.get(s.signature_image_key); } catch { image = null; } }
-      sigSlots.push({ slot_key: s.slot_key, label: s.label, declaration: s.declaration, status: s.status, signer_name: s.signer_name, signed_at: s.signed_at, method: s.method, signature_text: s.signature_text, image, position: s.slot_data?._signer_position ?? null });
+      sigSlots.push({ slot_key: s.slot_key, label: s.label, declaration: s.declaration, status: s.status, signer_name: s.signer_name, signed_at: s.signed_at, method: s.method, signature_text: s.signature_text, image, position: s.signer_position ?? null });
     }
     const dateField = ['issue_date', 'evaluation_date', 'date_of_request', 'collection_date', 'mpv_date', 'date_submitted'].find((k) => data[k]);
     const pdf = await renderPaper({

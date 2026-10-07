@@ -109,11 +109,19 @@ export class CasesService {
     if (c.status !== 'open' || c.current_stage !== 'delivery') throw guardError('wrong_stage', 'Delivery details are recorded in the delivery stage');
     const errors: Record<string, string> = {};
     for (const k of ['delivery_date', 'invoice_no', 'invoice_date', 'delivery_note_ref']) if (!body?.[k]) errors[k] = 'required';
-    for (const k of ['delivery_date', 'invoice_date']) if (body?.[k] && !/^\d{4}-\d{2}-\d{2}$/.test(body[k])) errors[k] = 'must be a date (YYYY-MM-DD)';
-    if (Object.keys(errors).length) throw validationError(errors);
+    for (const k of ['delivery_date', 'invoice_date']) if (body?.[k] && !/^\d{4}-\d{2}-\d{2}$/.test(body[k])) errors[k] = 'is not a valid date';
+    // same rule as the PA-04 delivery date: the date the goods or service were actually received
+    if (!errors.delivery_date && body?.delivery_date > new Date().toISOString().slice(0, 10)) errors.delivery_date = 'is in the future';
+    const hints: Record<string, string> = {
+      delivery_date: 'Enter the date the goods or service were actually received (today or earlier).',
+      invoice_no: "Type the number printed on the supplier's invoice.",
+      invoice_date: 'Pick the date printed on the invoice.',
+      delivery_note_ref: 'Type the reference of the delivery note or receipt.',
+    };
+    if (Object.keys(errors).length) throw validationError(errors, Object.fromEntries(Object.keys(errors).map((k) => [k, hints[k]])));
     if (body.delivery_note_attachment_id) {
       const a = await this.db.one('SELECT 1 AS ok FROM attachments WHERE id = $1', [body.delivery_note_attachment_id]);
-      if (!a) throw validationError({ delivery_note_attachment_id: 'file not found' });
+      if (!a) throw validationError({ delivery_note_attachment_id: 'file not found' }, { delivery_note_attachment_id: 'Upload the delivery note again.' });
     }
     const d = { delivery_date: body.delivery_date, invoice_no: body.invoice_no, invoice_date: body.invoice_date, delivery_note_ref: body.delivery_note_ref, delivery_note_attachment_id: body.delivery_note_attachment_id ?? null };
     await this.db.tx(async (t) => {

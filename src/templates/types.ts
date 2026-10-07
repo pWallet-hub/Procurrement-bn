@@ -1,3 +1,5 @@
+import type { PaperBlock } from './paper-layout';
+
 export type FieldType =
   | 'text' | 'textarea' | 'date' | 'time' | 'number' | 'money' | 'select' | 'radio' | 'checkbox_group' | 'yes_no'
   | 'table' | 'file' | 'user_ref' | 'supplier_ref' | 'budget_line_ref' | 'computed' | 'case_ref';
@@ -22,8 +24,10 @@ export interface Field {
   default?: any;               // value for new drafts; the keyword "today" on a date field fills the creation date
   /** key of the signature slot at which this top level field is filled (e.g. the decision on IM-08). Frozen at submit otherwise. */
   fill_at?: string;
-  /** extra value rule; `id_document`: Rwanda national ID or passport number, chosen by the radio field `type_field` */
-  check?: { rule: 'id_document'; type_field: string };
+  /** extra value rule; `id_document`: Rwanda national ID or passport number, chosen by the radio field `type_field`; `email`; `phone` */
+  check?: { rule: 'id_document'; type_field: string } | { rule: 'email' } | { rule: 'phone' };
+  /** how to fill the field correctly, shown next to a validation error (a generic hint by type is used otherwise) */
+  hint?: string;
 }
 
 export interface Section { key: string; title: string; description?: string; fields: Field[]; visible_if?: Condition }
@@ -41,9 +45,14 @@ export interface WorkflowDef {
   footer_note?: string;
 }
 
-/** How the form is laid out on paper / in the paper view (mirrors the printed AfS-Rwanda forms in /temp) */
+/** How the form is laid out on paper / in the paper view (mirrors the printed AfS-Rwanda forms in docs/reference-forms) */
 export interface PaperMeta {
   layout: 'form' | 'contract';
+  /** `box`: org / FORM / title / version box (procurement forms) · `title`: centred underlined title (TC-10) */
+  header?: 'box' | 'title';
+  subtitle?: string;
+  /** body of the form as printed; when absent the sections are printed as label / value tables */
+  blocks?: PaperBlock[];
   form_label: string;            // "FORM: <form_label>" in the header box
   title: string;                 // upper case title as printed
   version: string;               // "Version: 1.0"

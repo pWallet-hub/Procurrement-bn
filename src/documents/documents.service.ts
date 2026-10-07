@@ -8,7 +8,7 @@ import { canonical, documentHash, randomToken, sha256 } from '../common/hash';
 import { accessParams, docVisible } from '../common/access';
 import { TemplatesService, TemplateRow } from '../templates/templates.service';
 import { applyComputed } from '../templates/computed';
-import { collectFileIds, pickKnown, validateData, withoutFillAt } from '../templates/validate';
+import { collectFileIds, draftValidation, pickKnown, validateFull, withoutFillAt } from '../templates/validate';
 import { SlotDef } from '../templates/types';
 import { runGuards } from '../workflow/guards';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -51,8 +51,9 @@ export class DocumentsService {
 
   private async slotsOf(q: Queryable, docId: string, includeVoided = false) {
     return (await q.query(
-      `SELECT s.*, au.full_name AS assigned_name, g.signer_name, g.signed_at, g.method, g.signature_image_key, g.slot_data, g.signer_user_id
-       FROM signature_slots s LEFT JOIN users au ON au.id = s.assigned_user_id LEFT JOIN signatures g ON g.slot_id = s.id
+      `SELECT s.*, au.full_name AS assigned_name, g.signer_name, g.signed_at, g.method, g.signature_image_key, g.slot_data, g.signer_user_id,
+              COALESCE(g.slot_data->>'_signer_position', su.position) AS signer_position
+       FROM signature_slots s LEFT JOIN users au ON au.id = s.assigned_user_id LEFT JOIN signatures g ON g.slot_id = s.id LEFT JOIN users su ON su.id = g.signer_user_id
        WHERE s.document_id = $1 ${includeVoided ? '' : 'AND s.voided_at IS NULL'} ORDER BY s.seq, s.slot_key`, [docId])).rows;
   }
 
@@ -63,7 +64,7 @@ export class DocumentsService {
     return out;
   }
 
-  async dto(doc: any, user: AuthUser | null, validation?: Record<string, string>) {
+  async dto(doc: any, user: AuthUser | null, validation?: ReturnType<typeof draftValidation>) {
     const tpl = await this.templates.byId(doc.template_id);
     const slots = await this.slotsOf(this.db, doc.id);
     const creator = await this.db.one('SELECT id, full_name FROM users WHERE id = $1', [doc.created_by]);
@@ -81,7 +82,7 @@ export class DocumentsService {
         slot_key: s.slot_key, label: s.label, role_code: s.role_code, seq: s.seq, group: s.grp, status: s.status, declaration: s.declaration,
         external: !!s.external_email,
         assigned_user: s.assigned_user_id ? { id: s.assigned_user_id, full_name: s.assigned_name } : null,
-        signature: s.signed_at ? { signer_name: s.signer_name, signed_at: s.signed_at, method: s.method, image_url: s.signature_image_key ? `/api/v1/documents/${doc.id}/slots/${s.slot_key}/signature.png` : undefined } : null,
+        signature: s.signed_at ? { signer_name: s.signer_name, signer_position: s.signer_position ?? null, signed_at: s.signed_at, method: s.method, image_url: s.signature_image_key ? `/api/v1/documents/${doc.id}/slots/${s.slot_key}/signature.png` : undefined } : null,
       })),
       can: {
         edit: editor && doc.state === 'draft', submit: editor && doc.state === 'draft',
@@ -91,14 +92,14 @@ export class DocumentsService {
         assign: !!user && doc.state === 'in_signing' && (doc.created_by === user.id || user.roles.includes('accountant') || user.roles.includes('admin')),
       },
     };
-    if (validation) out.validation = { errors: validation };
+    if (validation) out.validation = validation;
     return out;
   }
 
   async get(id: string, user: AuthUser) {
     const doc = await this.loadVisible(this.db, id, user);
     const tpl = await this.templates.byId(doc.template_id);
-    const validation = doc.state === 'draft' ? validateData(tpl as any, doc.data, false) : undefined;
+    const validation = doc.state === 'draft' ? draftValidation(tpl as any, doc.data) : undefined;
     return this.dto(doc, user, validation);
   }
 
@@ -142,7 +143,7 @@ export class DocumentsService {
     if (!STANDALONE_DOC_TYPES.includes(docType)) throw badRequest('bad_doc_type', `Only ${STANDALONE_DOC_TYPES.join(', ')} can be created outside a case`);
     if (!user.permissions.includes('case.create') && !user.permissions.includes('document.edit')) throw forbidden();
     const doc = await this.createDraft(this.db, docType, null, user, data ?? {});
-    return this.dto(doc, user, validateData(await this.templates.active(docType) as any, doc.data, false));
+    return this.dto(doc, user, draftValidation(await this.templates.active(docType) as any, doc.data));
   }
 
   async createForCase(caseId: string, docType: string, user: AuthUser) {
@@ -174,11 +175,11 @@ export class DocumentsService {
       const ro = new Set(tpl.schema.sections.flatMap((s: any) => s.fields).filter((f: any) => f.readonly || f.type === 'case_ref' || f.type === 'computed').map((f: any) => f.key));
       for (const k of Object.keys(known)) if (ro.has(k)) delete known[k];
       const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, { ...doc.data, ...withoutFillAt(tpl, known) }, cc)));
-      const errors = validateData(tpl as any, data, false);
+      const validation = draftValidation(tpl as any, data);
       const upd = (await c.query('UPDATE documents SET data = $2, updated_at = now() WHERE id = $1 RETURNING *', [id, JSON.stringify(data)])).rows[0];
-      return { upd, errors };
+      return { upd, validation };
     });
-    return this.dto(result.upd, user, result.errors);
+    return this.dto(result.upd, user, result.validation);
   }
 
   // ---------- submit ----------
@@ -227,7 +228,7 @@ export class DocumentsService {
   private async attachmentHashes(q: Queryable, ids: string[]) {
     if (!ids.length) return [];
     const r = await q.query('SELECT id, sha256 FROM attachments WHERE id = ANY($1::uuid[])', [ids]);
-    if (r.rowCount !== new Set(ids).size) throw validationError({ attachment: 'one or more attached files do not exist' });
+    if (r.rowCount !== new Set(ids).size) throw validationError({ attachment: 'one or more attached files do not exist' }, { attachment: 'Upload the missing file(s) again, then submit.' });
     return r.rows.map((x) => x.sha256 as string);
   }
 
@@ -327,8 +328,8 @@ export class DocumentsService {
       // computed fields filled at this slot (e.g. the TC-10 total) use the whole document plus what the signer entered
       const full = applyComputed(tpl as any, { ...merged, ...entered });
       slotData = { ...entered, ...Object.fromEntries(fillFields.filter((f: any) => f.type === 'computed').map((f: any) => [f.key, full[f.key]])) };
-      const errors = validateData(tpl as any, { ...merged, ...slotData }, true, slot.slot_key);
-      if (Object.keys(errors).length) throw validationError(errors);
+      const { errors, hints } = validateFull(tpl as any, { ...merged, ...slotData }, true, slot.slot_key);
+      if (Object.keys(errors).length) throw validationError(errors, hints);
     }
 
     await runGuards(tpl.workflow.guards_on_sign, { q: c, tpl, doc, data: merged, caseRow, actorId: actor.userId, slot, body: { ...body, data: slotData ?? undefined } });

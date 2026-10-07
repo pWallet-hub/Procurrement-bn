@@ -1,9 +1,9 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from '@nestjs/common';
 
-/** One error shape for the whole API: {error:{code,message,fields}} */
+/** One error shape for the whole API: {error:{code,message,fields,hints}}. `hints` tells, per field path, how to fix it. */
 export class AppError extends HttpException {
-  constructor(status: number, public code: string, message: string, public fields?: Record<string, string>) {
-    super({ error: { code, message, ...(fields ? { fields } : {}) } }, status);
+  constructor(status: number, public code: string, message: string, public fields?: Record<string, string>, public hints?: Record<string, string>) {
+    super({ error: { code, message, ...(fields ? { fields } : {}), ...(hints && Object.keys(hints).length ? { hints } : {}) } }, status);
   }
 }
 export const notFound = (what = 'resource') => new AppError(404, 'not_found', `${what} not found`);
@@ -11,10 +11,12 @@ export const forbidden = (message = 'You do not have permission to do this') => 
 export const unauthorized = (message = 'Not signed in') => new AppError(401, 'unauthorized', message);
 export const badRequest = (code: string, message: string, fields?: Record<string, string>) => new AppError(400, code, message, fields);
 /** Guard failures and validation failures: HTTP 422 */
-export const guardError = (code: string, message: string, fields?: Record<string, string>) =>
-  new AppError(422, code.includes('.') ? code : `guard.${code}`, message, fields);
-export const validationError = (fields: Record<string, string>, message = 'Some fields are missing or invalid') =>
-  new AppError(422, 'validation.failed', message, fields);
+export const guardError = (code: string, message: string, fields?: Record<string, string>, hints?: Record<string, string>) =>
+  new AppError(422, code.includes('.') ? code : `guard.${code}`, message, fields, hints);
+export const validationError = (fields: Record<string, string>, hints?: Record<string, string>, message?: string) => {
+  const n = Object.keys(fields).length;
+  return new AppError(422, 'validation.failed', message ?? `${n} field${n === 1 ? ' is' : 's are'} missing or invalid. Fix the fields listed below and try again.`, fields, hints);
+};
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {

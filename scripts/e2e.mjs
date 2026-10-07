@@ -71,7 +71,7 @@ const qc0 = must(await call('POST', `/cases/${caseId}/documents`, T.accountant, 
 const upload = async (name) => { const f = new FormData(); f.append('file', new Blob([`%PDF-1.4 quotation ${name}`], { type: 'application/pdf' }), `${name}.pdf`); f.append('case_id', caseId); return (await call('POST', '/attachments', T.accountant, f)); };
 const a1 = must(await upload('quote-a'), 201, 'upload quotation file A'); const a2 = must(await upload('quote-b'), 201, 'upload quotation file B');
 const q = (s, a, price) => ({ supplier: s.id, tel: s.phone, email: s.email, quote_ref: 'Q-1', quote_date: '2026-10-05', total_price: money(price), delivery: '7 days', validity: '30 days', attachment: a.id });
-await call('PATCH', `/documents/${qc0.id}`, T.accountant, { data: { quotations: [q(sup[0], a1, 95000), q(sup[1], a2, 110000)], collection_method: ['email'], conflict_declaration: false } });
+await call('PATCH', `/documents/${qc0.id}`, T.accountant, { data: { quotations: [q(sup[0], a1, 95000), q(sup[1], a2, 110000)], collection_method: ['email'], conflict_declaration: 'n_a' } });
 const qc = must(await call('POST', `/documents/${qc0.id}/submit`, T.accountant), 201, 'submit QC-02 (2 quotations with files)');
 must(await sign(qc.id, 'collected_by', T.accountant, qc), 201, 'collected_by signs');
 must(await sign(qc.id, 'checked_by_accountant', T.accountant, qc), 201, 'checked_by_accountant signs');
@@ -151,7 +151,7 @@ ok(c.current_stage === 'delivery', 'case in delivery stage after both PO and con
 console.log('\n== delivery and PA-04 payment');
 must(await call('POST', `/cases/${caseId}/documents`, T.accountant, { doc_type: 'PA-04' }), 422, 'PA-04 not allowed before payment stage');
 const dn = await upload('delivery-note');
-must(await call('POST', `/cases/${caseId}/delivery`, T.accountant, { delivery_date: '2026-10-20', invoice_no: 'INV-77', invoice_date: '2026-10-20', delivery_note_ref: 'DN-5', delivery_note_attachment_id: dn.id }), 201, 'record delivery');
+must(await call('POST', `/cases/${caseId}/delivery`, T.accountant, { delivery_date: new Date().toISOString().slice(0, 10), invoice_no: 'INV-77', invoice_date: new Date().toISOString().slice(0, 10), delivery_note_ref: 'DN-5', delivery_note_attachment_id: dn.id }), 201, 'record delivery');
 const pa0 = must(await call('POST', `/cases/${caseId}/documents`, T.accountant, { doc_type: 'PA-04' }), 201, 'create PA-04');
 ok(pa0.data.ctrl_requisition_attached === true && pa0.data.ctrl_two_quotations === true && pa0.data.ctrl_evaluation_signed === true, 'controls computed from the case');
 const early2 = await call('POST', `/documents/${pa0.id}/submit`, T.accountant);

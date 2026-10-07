@@ -1,6 +1,8 @@
 import PDFDocument from 'pdfkit';
 import { Field, PaperMeta, Section } from '../templates/types';
 import { CONTRACT_CLAUSES } from '../templates/definitions/standalone';
+import { expandBlocks, fieldMap, inlinePieces, InlineCtx, LayoutField } from '../templates/paper-layout';
+import { BlockEnv, drawBlocks, flow, INK } from './blocks-pdf';
 
 /**
  * Draws a document the way the printed AfS-Rwanda form looks (see /temp): logo, header box, lettered sections,
@@ -21,14 +23,15 @@ export interface PaperCtx {
 }
 
 const BLUE = '#dbe9f5', GREY = '#f2f2f2', LINE = '#6b6b6b', HEAD = '#1f4e79', GREEN = '#0b6b3a';
-const M = 36, W = 595.28 - 2 * M, TOP = 36, BOTTOM = 56;
+const M = 36, W = 595.28 - 2 * M, TOP = 30, BOTTOM = 50;
 const ddmmyyyy = (d: Date | string | null) => { if (!d) return ''; const x = new Date(d); return `${String(x.getUTCDate()).padStart(2, '0')}/${String(x.getUTCMonth() + 1).padStart(2, '0')}/${x.getUTCFullYear()}`; };
 
 export function renderPaper(c: PaperCtx): Promise<PDFKit.PDFDocument> {
   const pdf = new PDFDocument({ size: 'A4', margins: { top: TOP, bottom: BOTTOM, left: M, right: M }, bufferPages: true, info: { Title: c.title, Author: 'AfS-Rwanda' } });
   let y = TOP;
   const limit = () => pdf.page.height - BOTTOM;
-  const need = (h: number) => { if (y + h > limit()) { pdf.addPage(); y = TOP; } };
+  let pageTop = TOP;
+  const need = (h: number) => { if (y + h > limit()) { pdf.addPage(); y = pageTop; } };
   const text = (t: string, x: number, yy: number, o: PDFKit.Mixins.TextOptions & { size?: number; bold?: boolean; italic?: boolean; color?: string } = {}) => {
     pdf.font(o.bold ? 'Helvetica-Bold' : o.italic ? 'Helvetica-Oblique' : 'Helvetica').fontSize(o.size ?? 8).fillColor(o.color ?? '#000');
     pdf.text(t, x, yy, { lineBreak: o.lineBreak ?? true, ...o });
@@ -36,11 +39,28 @@ export function renderPaper(c: PaperCtx): Promise<PDFKit.PDFDocument> {
   const h = (t: string, w: number, size = 8, bold = false) => { pdf.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size); return pdf.heightOfString(t || ' ', { width: w }); };
   const cell = (x: number, yy: number, w: number, hh: number, fill?: string) => { pdf.lineWidth(0.6).rect(x, yy, w, hh); fill ? pdf.fillAndStroke(fill, LINE) : pdf.stroke(LINE); };
 
-  // ---- logo + header box
-  if (c.logo) { try { pdf.image(c.logo, (595.28 - 250) / 2, y, { width: 250 }); y += 250 * 164 / 1008 + 6; } catch { y += 6; } }
+  // ---- logo (its image includes the thin rules either side) + header box
+  if (c.logo) {
+    try {
+      const lwid = 230, lh = lwid * 164 / 1008;
+      pdf.image(c.logo, (595.28 - lwid) / 2, y, { width: lwid });
+      y += lh + 6;
+      // the contract is on letterhead: the logo is repeated at the top of every page
+      if (c.paper.layout === 'contract') {
+        pageTop = y;
+        pdf.on('pageAdded', () => { try { pdf.image(c.logo!, (595.28 - lwid) / 2, TOP, { width: lwid }); } catch { /* ignore */ } });
+      }
+    } catch { y += 6; }
+  }
   const isContract = c.paper.layout === 'contract';
+  const blocks = !isContract && c.paper.blocks?.length ? c.paper.blocks : null;
   const lw = W * 0.62, rw = W - lw;
-  if (isContract) { const th = h(c.paper.title, W, 12, true); text(c.paper.title, M, y, { size: 12, bold: true, width: W, align: 'center' }); y += th + 10; } else {
+  if (isContract) { const th = h(c.paper.title, W, 12, true); text(c.paper.title, M, y, { size: 12, bold: true, width: W, align: 'center' }); y += th + 10; }
+  else if (c.paper.header === 'title') {
+    pdf.font('Helvetica-BoldOblique').fontSize(14).fillColor('#000').text(c.paper.title, M, y, { width: W, align: 'center', underline: true });
+    y += 20;
+    if (c.paper.subtitle) { pdf.font('Times-BoldItalic').fontSize(10.5).fillColor('#000').text(c.paper.subtitle, M, y, { width: W, align: 'center' }); y += 18; }
+  } else {
   const t1 = h(c.paper.org, lw - 10, 9.5, true) + 8, t2 = h(c.paper.title, lw - 10, 11, true) + 10;
   const r2 = Math.max(t2, 34);
   cell(M, y, lw, t1, BLUE); text(c.paper.org, M + 5, y + 4, { size: 9.5, bold: true, width: lw - 10 });
@@ -50,10 +70,26 @@ export function renderPaper(c: PaperCtx): Promise<PDFKit.PDFDocument> {
   cell(M + lw, y, rw, r2);
   text(`Version: ${c.paper.version}`, M + lw + 5, y + 4, { size: 8, width: rw - 10 });
   text(`${c.paper.date_label}: ${c.dateText}`, M + lw + 5, y + 16, { size: 8, width: rw - 10 });
-  if (c.requestNo) text(`Request No: ${c.requestNo}`, M + lw + 5, y + 27, { size: 8, bold: true, width: rw - 10 });
-  y += Math.max(r2, c.requestNo ? 40 : 0) + 4;
+  // the printed forms carry the request number in the body; older layouts print it here
+  const headNo = !blocks && c.requestNo;
+  if (headNo) text(`Request No: ${c.requestNo}`, M + lw + 5, y + 27, { size: 8, bold: true, width: rw - 10 });
+  y += Math.max(r2, headNo ? 40 : 0) + 4;
   }
-  if (c.paper.intro) { const hh = h(c.paper.intro, W, 7.5); need(hh + 4); text(c.paper.intro, M, y, { size: 7.5, width: W }); y += hh + 6; }
+  const fields = fieldMap(c.sections as unknown as { fields: LayoutField[] }[]);
+  const ictx: InlineCtx = {
+    data: c.data, fields,
+    slots: new Map(c.slots.map((s) => [s.slot_key, { status: s.status, name: s.signer_name, position: s.position, signedAt: s.signed_at }])),
+    fmt: (f, v) => { const t = c.fmt(f as Field, v); return t === '-' ? '' : t; },
+  };
+  const env: BlockEnv = {
+    pdf, x: M, width: W, y, ctx: ictx,
+    need: (hh) => { if (env.y + hh > limit()) { pdf.addPage(); env.y = TOP; return true; } return false; },
+    sigs: new Map(c.slots.filter((s) => s.status === 'signed').map((s) => [s.slot_key, { image: s.image, text: s.signature_text }])),
+  };
+  if (c.paper.intro) {
+    const f = flow(env, inlinePieces(c.paper.intro, {}, ictx), W, blocks ? 8 : 7.5);
+    need(f.height + 4); f.draw(M, y); y += f.height + 4;
+  }
 
   // ---- checkbox line
   const checks = (f: Field, selected: string[], x: number, yy: number, w: number): number => {
@@ -123,7 +159,9 @@ export function renderPaper(c: PaperCtx): Promise<PDFKit.PDFDocument> {
 
   // ---- body
   const visible = (cond: any) => !cond || (cond.equals !== undefined ? c.data[cond.field] === cond.equals : cond.includes !== undefined ? (c.data[cond.field] ?? []).includes(cond.includes) : true);
-  if (c.paper.layout === 'contract') contract(); else {
+  if (c.paper.layout === 'contract') contract();
+  else if (blocks) { env.y = y; drawBlocks(env, expandBlocks(blocks, c.data)); y = env.y; }
+  else {
     let signed = false;
     for (const s of c.sections) {
       if (c.paper.signoff_before === s.key && !signed) { signoff(); signed = true; }
@@ -164,39 +202,100 @@ export function renderPaper(c: PaperCtx): Promise<PDFKit.PDFDocument> {
     if (c.paper.notes) { const hh = h(c.paper.notes, W, 7.5); need(hh); text(c.paper.notes, M, y, { size: 7.5, italic: true, width: W }); y += hh + 4; }
   }
 
+  /** Supply contract (2024): parties table, numbered scope lines, clauses in two columns, signatures, address box. */
   function contract() {
     const d = c.data;
-    const P = (t: string, o: any = {}) => { const hh = h(t, W, o.size ?? 9.5, o.bold) + (o.gap ?? 5); need(hh); text(t, M, y, { size: o.size ?? 9.5, bold: o.bold, width: W, align: o.align }); y += hh; };
+    const rule = () => { pdf.lineWidth(0.8).moveTo(M, y).lineTo(M + W, y).stroke('#2e74b5'); y += 6; };
+    const para = (t: string, x: number, w: number, o: { bold?: boolean; size?: number; serif?: boolean } = {}) => {
+      const f = o.serif ? (o.bold ? 'Times-Bold' : 'Times-Roman') : o.bold ? 'Helvetica-Bold' : 'Helvetica';
+      pdf.font(f).fontSize(o.size ?? 9);
+      const hh = pdf.heightOfString(t, { width: w, align: 'justify' });
+      return { hh, draw: (yy: number) => pdf.font(f).fontSize(o.size ?? 9).fillColor('#000').text(t, x, yy, { width: w, align: 'justify' }) };
+    };
+    const P = (t: string, o: { bold?: boolean; gap?: number; serif?: boolean } = {}) => { const p = para(t, M, W, o); need(p.hh + (o.gap ?? 5)); p.draw(y); y += p.hh + (o.gap ?? 5); };
+    const fmtRef = (k: string) => { const v = c.fmt({ key: k, type: 'case_ref', label: '' } as Field, d[k]); return v === '-' ? '' : v; };
+
     y += 4;
-    P('This financial contract is made between', { gap: 3 });
-    P(CONTRACT_CLAUSES.contractor, { gap: 8 });
-    const f = (k: string) => c.fmt({ key: k, type: 'case_ref', label: '' } as Field, d[k]);
-    P(`Supplier\nSupplier's Name: ${d.supplier_name ?? c.fmt({ key: 'supplier', type: 'supplier_ref', label: '' } as Field, d.supplier)}\nSupplier's Address: ${f('supplier_address')}\nSupplier's Email: ${f('supplier_email')}\nSupplier's Telephone: ${f('supplier_telephone')}\nTIN Number OR ID No: ${f('supplier_tin')}`, { gap: 8 });
+    P('This financial contract is made between', { bold: true, gap: 3 });
+    rule();
+    // parties
+    const lx = M, lw2 = W * 0.24, rx = M + lw2, rw2 = W * 0.62;
+    const cp = para(CONTRACT_CLAUSES.contractor.replace(/^Contractor\s*/, ''), rx, rw2, { size: 9.5 });
+    need(cp.hh + 8);
+    pdf.font('Helvetica-BoldOblique').fontSize(9).fillColor('#000').text('Contractor', lx, y, { width: lw2 });
+    cp.draw(y); y += cp.hh + 10;
+    const supplierName = d.supplier_name ?? (c.fmt({ key: 'supplier', type: 'supplier_ref', label: '' } as Field, d.supplier) || '');
+    const lines: [string, string][] = [["Supplier's Name", supplierName === '-' ? '' : supplierName], ["Supplier's Address", fmtRef('supplier_address')], ["Supplier's Email", fmtRef('supplier_email')], ["Supplier's Telephone", fmtRef('supplier_telephone')], ['TIN Number OR ID No', fmtRef('supplier_tin')]];
+    need(lines.length * 13 + 8);
+    pdf.font('Helvetica-Bold').fontSize(9).fillColor('#000').text('Supplier', lx, y, { width: lw2 });
+    for (const [k, v] of lines) {
+      pdf.font('Helvetica').fontSize(9.5).fillColor('#000').text(`${k}: `, rx, y, { continued: true }).fillColor(INK).text(v || ' ');
+      y += 13;
+    }
+    y += 6;
     P('Scope of Services: The Supplier agrees to provide the following services and/or materials to AfS-Rwanda:', { bold: true, gap: 3 });
-    const rows: any[] = d.scope ?? [];
-    for (let i = 0; i < Math.max(8, rows.length); i++) { const r = rows[i] ?? {}; P(`${i + 1}. ${[r.col1, r.col2, r.col3].filter(Boolean).join('   |   ') || '_______________________________________________'}`, { gap: 2 }); }
-    y += 4;
+    rule();
+    const rows: any[] = Array.isArray(d.scope) ? d.scope : [];
+    for (let i = 0; i < Math.max(8, rows.length); i++) {
+      const r = rows[i] ?? {};
+      const t = [r.col1, r.col2, r.col3].filter(Boolean).join('  -  ');
+      need(16);
+      pdf.font('Helvetica').fontSize(9).fillColor('#000').text(`${i + 1}.`, M + 18, y, { lineBreak: false });
+      if (t) pdf.fillColor(INK).text(t, M + 40, y, { width: W - 50 });
+      else pdf.lineWidth(0.5).moveTo(M + 40, y + 9).lineTo(M + W - 10, y + 9).stroke('#777');
+      y += Math.max(16, t ? pdf.heightOfString(t, { width: W - 50 }) + 5 : 16);
+    }
+    y += 8;
+    // clauses in two columns, as printed: Contract Value + Payment Terms | Tax Declaration + Delivery + Liability
     const val = d.contract_value?.amount ? `${Number(d.contract_value.amount).toLocaleString('en-US')} ${d.contract_value.currency}. ` : '';
     const adv = d.advance_percent ?? 50, days = d.advance_days ?? 2;
-    P('Contract Value:', { bold: true, gap: 1 }); P(val + CONTRACT_CLAUSES.value);
-    P('Tax Declaration:', { bold: true, gap: 1 }); P(CONTRACT_CLAUSES.tax);
-    P('Payment Terms:', { bold: true, gap: 1 }); P(CONTRACT_CLAUSES.payment.replace('{advance_percent}', adv).replace('{advance_days}', days).replace('{balance_percent}', String(100 - adv)));
-    P('Delivery and Deadlines:', { bold: true, gap: 1 }); P(CONTRACT_CLAUSES.delivery);
-    P('Liability:', { bold: true, gap: 1 }); P(CONTRACT_CLAUSES.liability);
-    P('Confidentiality:', { bold: true, gap: 1 }); P(CONTRACT_CLAUSES.confidentiality);
-    P('Acceptance:', { bold: true, gap: 1 }); P(CONTRACT_CLAUSES.acceptance);
-    need(120); P('Signed by:', { bold: true, gap: 4 });
+    const payment = CONTRACT_CLAUSES.payment.replace('{advance_percent}', adv).replace('{advance_days}', days).replace('{balance_percent}', String(100 - adv));
+    const gap = 18, cw2 = (W - gap) / 2;
+    const pairs: [string, string, boolean][][] = [
+      [['Contract Value:', val + CONTRACT_CLAUSES.value, true], ['Tax Declaration:', CONTRACT_CLAUSES.tax, false]],
+      [['Payment Terms:', payment, false], ['Delivery and Deadlines:', CONTRACT_CLAUSES.delivery, false]],
+      [['', '', false], ['Liability:', CONTRACT_CLAUSES.liability, false]],
+    ];
+    for (const pair of pairs) {
+      const parts = pair.map(([head, body, serif], j) => {
+        const x = M + j * (cw2 + gap);
+        const ph = head ? para(head, x, cw2, { bold: true, serif, size: 9.5 }) : null;
+        const pb = body ? para(body, x, cw2, { size: 9 }) : null;
+        return { hh: (ph ? ph.hh + 6 : 0) + (pb ? pb.hh + 8 : 0), draw: (yy: number) => { if (ph) ph.draw(yy); if (pb) pb.draw(yy + (ph ? ph.hh + 6 : 0)); } };
+      });
+      const hh = Math.max(...parts.map((p) => p.hh));
+      need(hh);
+      parts.forEach((p) => p.draw(y));
+      y += hh;
+    }
+    P('Confidentiality:', { bold: true, gap: 4 }); P(CONTRACT_CLAUSES.confidentiality, { gap: 8 });
+    P('Acceptance:', { bold: true, serif: true, gap: 4 }); P(CONTRACT_CLAUSES.acceptance, { serif: true, gap: 14 });
+
+    need(130); P('Signed by:', { bold: true, serif: true, gap: 8 });
     const cw = W / 2, y0 = y;
     c.slots.forEach((s, j) => {
       const x = M + j * cw, done = s.status === 'signed';
-      text(j === 0 ? 'For AfS-Rwanda:' : "For Supplier's Name:", x, y0, { size: 9, bold: true, width: cw - 10 });
-      text(`Name: ${done ? s.signer_name : '___________________________'}`, x, y0 + 16, { size: 9, width: cw - 10 });
-      text(`Position: ${done ? (s.position ?? '') : '_________________________'}`, x, y0 + 30, { size: 9, width: cw - 10 });
-      if (done && s.image) { try { pdf.image(s.image, x, y0 + 44, { fit: [cw - 30, 34] }); } catch { /* ignore */ } }
-      else if (done && s.signature_text) text(s.signature_text, x, y0 + 48, { size: 14, italic: true, width: cw - 10 });
-      text(`Date: ${done ? ddmmyyyy(s.signed_at) : '____________________________'}`, x, y0 + 84, { size: 9, width: cw - 10 });
+      const line = (label: string, v: string, yy: number) => {
+        pdf.font('Times-Bold').fontSize(10).fillColor('#000').text(label, x, yy, { lineBreak: false });
+        const lx2 = x + pdf.widthOfString(label) + 4;
+        if (v) pdf.font('Times-Roman').fillColor(INK).text(v, lx2, yy, { width: cw - (lx2 - x) - 20, lineBreak: false });
+        else pdf.lineWidth(0.5).moveTo(lx2, yy + 10).lineTo(x + cw - 30, yy + 10).stroke('#555');
+      };
+      pdf.font('Times-Bold').fontSize(10).fillColor('#000').text(j === 0 ? 'For AfS-Rwanda:' : "For Supplier's Name:", x, y0, { width: cw - 10 });
+      line('Name:', done ? s.signer_name ?? '' : '', y0 + 18);
+      line('Position:', done ? s.position ?? '' : '', y0 + 34);
+      line('Date:', done ? ddmmyyyy(s.signed_at) : '', y0 + 50);
+      if (done && s.image) { try { pdf.image(s.image, x, y0 + 64, { fit: [cw - 40, 32] }); } catch { /* unreadable image */ } }
+      else if (done && s.signature_text) pdf.font('Times-Italic').fontSize(14).fillColor(INK).text(s.signature_text, x, y0 + 70, { width: cw - 10 });
     });
     y = y0 + 104;
+    // address box of the letterhead
+    const addr = ['Street: KK 655 ST, District: KICUKIRO, City of Kigali', 'Tel: +250 788 667 469', 'Email: rwandaafs@gmail.com', 'Website: www.afs-rwanda.org'];
+    need(70);
+    const bw = 250, bx = M + (W - bw) / 2;
+    pdf.lineWidth(0.6).rect(bx, y, bw, 58).stroke('#000');
+    addr.forEach((t, i) => pdf.font('Helvetica').fontSize(8.5).fillColor('#000').text(t, bx + 8, y + 6 + i * 12, { lineBreak: false }));
+    y += 64;
   }
 
   // ---- footer (+ page numbers, DRAFT mark) on every page
@@ -206,7 +305,7 @@ export function renderPaper(c: PaperCtx): Promise<PDFKit.PDFDocument> {
     const bm = pdf.page.margins.bottom; pdf.page.margins.bottom = 0;
     if (c.draft) { pdf.save(); pdf.rotate(-35, { origin: [300, 420] }); pdf.opacity(0.08).font('Helvetica-Bold').fontSize(90).fillColor('#000').text('DRAFT', 110, 380, { lineBreak: false }); pdf.restore(); }
     const fy = pdf.page.height - 38;
-    pdf.font('Helvetica').fontSize(c.paper.layout === 'contract' ? 7 : 7.5).fillColor('#444').text(c.paper.footer, M, fy, { width: W, align: 'center', lineBreak: true });
+    if (c.paper.layout !== 'contract') pdf.font('Helvetica').fontSize(7.5).fillColor('#444').text(c.paper.footer, M, fy, { width: W, align: 'center', lineBreak: true });
     pdf.fontSize(7).fillColor('#888').text(`Page ${i - range.start + 1} of ${range.count}`, M, fy + 18, { width: W, align: 'center', lineBreak: false });
     pdf.page.margins.bottom = bm;
   }
