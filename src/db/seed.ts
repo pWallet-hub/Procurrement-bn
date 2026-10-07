@@ -44,7 +44,11 @@ export async function seed(): Promise<void> {
     for (const t of ALL_TEMPLATES) {
       // a template version already used by documents is never rewritten: bump `version` to change a live form
       const used = await pool.query('SELECT 1 FROM documents d JOIN form_templates f ON f.id = d.template_id WHERE f.code = $1 AND f.version = $2 LIMIT 1', [t.code, t.version]);
-      if (used.rowCount) continue;
+      if (used.rowCount) {
+        // the printed layout (schema.paper) is presentation only, outside the document hash: layout fixes reach existing documents of this version
+        await pool.query("UPDATE form_templates SET schema = jsonb_set(schema, '{paper}', $3::jsonb) WHERE code = $1 AND version = $2", [t.code, t.version, JSON.stringify(t.schema.paper ?? null)]);
+        continue;
+      }
       await pool.query('UPDATE form_templates SET active = false WHERE code = $1 AND version <> $2', [t.code, t.version]);
       await pool.query(
         `INSERT INTO form_templates (code, version, title, description, schema, signature_slots, workflow, active) VALUES ($1,$2,$3,$4,$5,$6,$7,true)

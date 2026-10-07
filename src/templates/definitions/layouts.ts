@@ -321,26 +321,18 @@ const TC10: PaperBlock[] = [
   { t: 'grid', cols: [100], frame: 'dashed', dots: true, rows: [
     [V('**Issued to Mr/Mrs/Ms:** {issued_to/issued_to_name:60}\n**ID:** {id_number:60}\n**Account number:** {account_number:60}\n**Function :** {function:60}', { h: 92 })],
   ] },
-  { t: 'grid', cols: [30, 16, 19, 35], dots: true, rows: [
+  { t: 'grid', cols: [25, 25, 25, 25], dots: true, rows: [
     [V('5. **Program:** {program:24}', { span: 2, h: 30 }), V('6. **Funding:** {funding:24}', { span: 2 })],
     [V('7. **Expected results:**\n{expected_results:90}', { span: 4, h: 62 })],
     [V('8. **Purpose of the mission:**\n{purpose:90}', { span: 4, h: 62 })],
     [V('9. **Supervisor who proposed the mission:** {supervisor:50}  {@supervisor.signature?}', { span: 4, h: 30 })],
     [V('10. **Destination:** {destination:26}', { span: 2 }), V('11. **Date and place of departure:** {departure_date}\n{departure_place:40}', { span: 2 })],
     [V('12. **Returning date:** {return_date}', { span: 2 }), V('13. **Duration:** {duration_days:6} (days)'), V('14. **Means of transport :**\n{transport}')],
-    [V('15. **Mission allowance per day :**\n{allowance_per_day:26}'), V('16. **Accommodation & Incidental per day :**\n{accommodation_per_day:26}', { span: 2 }), V('**Transport (whole mission) :**\n{transport_cost:20}\n{transport_details?}')],
-    [V('17. **Total Amount** :  **{total_amount:26}**', { span: 4, sub: '(15 + 16) × duration (days) + transport' })],
+    [V('15. **Mission allowance per day :**\n{allowance_per_day:22}'), V('16. **Accommodation & Incidental per day :**\n{accommodation_per_day:22}'), V('**Transport :**\n{transport_cost:22}'), V('17. **Total Amount** :\n{total_amount:22}')],
   ] },
   { t: 'grid', cols: [58, 42], frame: 'none', dots: true, rows: [
     [V('Issued at {issued_at:18} On {@approved_by.date}\n\n**Approved By:** {@approved_by.name}\n{@approved_by.signature?}\n\n**Authorized Signature & Stamp**', { h: 110 }),
       V('**Visa of Hosting Institution**\n(Authorized Name, Signature & Stamp)\n{host_authorized?}\n\n**Arrival date** {host_arrival_date:20}\n\n**Departure date** {host_departure_date:20}', { box: true, h: 110 })],
-  ] },
-  { t: 'heading', text: 'Internal approval record', style: 'blue' },
-  { t: 'signoff', cols: 4, cells: [
-    { slot: 'traveller', label: 'Traveller (requested by)' },
-    { slot: 'supervisor', label: 'Supervisor who proposed the mission' },
-    { slot: 'admin_costs', label: 'Costs entered by (Administrator)' },
-    { slot: 'funding_check', label: 'Funding checked by (Accountant)' },
   ] },
 ];
 
