@@ -13,6 +13,25 @@ export function cond(c: Condition | undefined, data: Record<string, any>): boole
   return true;
 }
 
+/** Spaces removed, upper case: how ID / passport numbers are stored and checked */
+export const normalizeIdNumber = (v: string) => v.replace(/\s+/g, '').toUpperCase();
+
+/**
+ * Rwanda national ID: 16 digits = holder category (1 Rwandan, 2 refugee, 3 foreign resident), birth year (4), gender (8 male, 7 female),
+ * then 9 more digits. Passport: 6 to 9 letters/digits with at least one digit (ICAO document number).
+ */
+export function idDocumentError(type: unknown, value: string): string | null {
+  const v = normalizeIdNumber(value);
+  if (type === 'passport') return /^(?=.*\d)[A-Z0-9]{6,9}$/.test(v) ? null : 'passport number must be 6 to 9 letters or digits';
+  if (type !== 'rwanda_national_id') return 'choose the ID type first';
+  if (!/^\d{16}$/.test(v)) return 'a Rwanda national ID has 16 digits';
+  if (!'123'.includes(v[0])) return 'a Rwanda national ID starts with 1, 2 or 3';
+  const year = Number(v.slice(1, 5));
+  if (year < 1900 || year > new Date().getUTCFullYear()) return 'digits 2 to 5 must be a valid birth year';
+  if (v[5] !== '7' && v[5] !== '8') return 'the 6th digit must be 7 or 8';
+  return null;
+}
+
 const isAuto = (f: Field) => f.readonly || f.type === 'computed' || f.type === 'case_ref';
 
 function checkType(f: Field, v: any): string | null {
@@ -67,7 +86,7 @@ function checkField(f: Field, v: any, path: string, data: Record<string, any>, s
     v.forEach((row: any, i: number) => (f.columns ?? []).forEach((c) => checkField(c, row[c.key], `${path}[${i}].${c.key}`, { ...data, ...row }, strict, errors)));
     return;
   }
-  const e = checkType(f, v);
+  const e = checkType(f, v) ?? (f.check?.rule === 'id_document' ? idDocumentError(data[f.check.type_field], v) : null);
   if (e) errors[path] = e;
   if (f.allow_other && strict && (f.type === 'checkbox_group' ? (v as string[]).includes('other') : v === 'other') && blank(data[`${f.key}_other`]) ) {
     errors[`${path}_other`] = 'please specify';

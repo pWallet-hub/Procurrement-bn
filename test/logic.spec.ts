@@ -1,5 +1,5 @@
 import { applyComputed } from '../src/templates/computed';
-import { validateData, withoutFillAt } from '../src/templates/validate';
+import { idDocumentError, validateData, withoutFillAt } from '../src/templates/validate';
 import { canonical, documentHash } from '../src/common/hash';
 import { eventHash } from '../src/audit/audit.service';
 import { ALL_TEMPLATES } from '../src/templates/definitions';
@@ -44,6 +44,23 @@ describe('travel clearance (TC-10)', () => {
     expect(atSubmit.program).toBe('required');
     expect(validateData(t, {}, true, 'admin_costs').allowance_per_day).toBe('required');
     expect(withoutFillAt(t, { program: 'p', allowance_per_day: 1, total_amount: 2 })).toEqual({ program: 'p' });
+  });
+  it('validates a Rwanda national ID or a passport number', () => {
+    expect(idDocumentError('rwanda_national_id', '1 1990 8 0012345 6 78')).toBeNull();
+    expect(idDocumentError('rwanda_national_id', '1199070012345678')).toBeNull();
+    expect(idDocumentError('rwanda_national_id', '119908001234567')).toMatch(/16 digits/);
+    expect(idDocumentError('rwanda_national_id', '4199080012345678')).toMatch(/starts with/);
+    expect(idDocumentError('rwanda_national_id', '1180080012345678')).toMatch(/birth year/);
+    expect(idDocumentError('rwanda_national_id', '1199050012345678')).toMatch(/6th digit/);
+    expect(idDocumentError('passport', 'pc 123456')).toBeNull();
+    expect(idDocumentError('passport', 'ABCDEFG')).toMatch(/passport/);
+    expect(idDocumentError('passport', 'PC12345678901')).toMatch(/passport/);
+    const t = tpl('TC-10');
+    const base = { traveller_type: 'external', issued_to_name: 'Jane Doe', id_type: 'passport' };
+    expect(validateData(t, { ...base, id_number: 'X' }, false).id_number).toMatch(/passport/);
+    expect(validateData(t, { ...base, id_number: 'PC1234567' }, false).id_number).toBeUndefined();
+    expect(validateData(t, { traveller_type: 'external' }, true).issued_to_name).toBe('required');
+    expect(validateData(t, { traveller_type: 'external' }, true).issued_to).toBeUndefined();
   });
   it('rejects a return before departure and a supervisor who is the traveller', () => {
     expect(() => GUARDS.travel_clearance_valid({ data: { departure_date: '2026-10-10', return_date: '2026-10-09' } } as any)).toThrow();

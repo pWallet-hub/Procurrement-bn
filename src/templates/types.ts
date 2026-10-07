@@ -22,6 +22,8 @@ export interface Field {
   default?: any;               // value for new drafts; the keyword "today" on a date field fills the creation date
   /** key of the signature slot at which this top level field is filled (e.g. the decision on IM-08). Frozen at submit otherwise. */
   fill_at?: string;
+  /** extra value rule; `id_document`: Rwanda national ID or passport number, chosen by the radio field `type_field` */
+  check?: { rule: 'id_document'; type_field: string };
 }
 
 export interface Section { key: string; title: string; description?: string; fields: Field[]; visible_if?: Condition }

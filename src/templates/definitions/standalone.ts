@@ -116,12 +116,19 @@ export const CONTRACT: TemplateDef = {
   workflow: { guards_on_submit: ['template_valid'], guards_on_sign: ['frozen_after_sign', 'no_duplicate_signature'], requires_conflict_confirmation: false },
 };
 
+const internal = when('traveller_type', { equals: 'internal_afs_staff' });
+const external = when('traveller_type', { equals: 'external' });
+
 export const TC10: TemplateDef = {
   code: 'TC-10', version: 1, title: 'Travel Clearance',
   description: 'Completed by an AfS-Rwanda employee travelling on a work mission. The hosting institution stamps the printed clearance on arrival and departure.',
   schema: { sections: [
     { key: 'traveller', title: 'Traveller', fields: [
-      f.user('issued_to', 'Issued to Mr/Mrs/Ms', req), f.text('id_number', 'ID', req),
+      f.radio('traveller_type', 'Traveller', ['Internal (AfS staff)', 'External'], { ...req, default: 'internal_afs_staff' }),
+      f.user('issued_to', 'Issued to Mr/Mrs/Ms', { required_if: internal, visible_if: internal }),
+      f.text('issued_to_name', 'Issued to Mr/Mrs/Ms (full name)', { required_if: external, visible_if: external, maxLength: 120 }),
+      f.radio('id_type', 'ID type', ['Rwanda national ID', 'Passport'], req),
+      f.text('id_number', 'ID / passport number', { ...req, maxLength: 30, check: { rule: 'id_document', type_field: 'id_type' }, help: 'Rwanda national ID: 16 digits. Passport: 6 to 9 letters or digits.' }),
       f.text('account_number', 'Account number', req), f.text('function', 'Function', req),
     ] },
     { key: 'mission', title: 'Mission', fields: [
@@ -146,7 +153,7 @@ export const TC10: TemplateDef = {
     ] },
   ] },
   signature_slots: [
-    { key: 'traveller', label: 'Traveller', role: 'requesting_staff', seq: 1, declaration: 'I request this travel clearance and confirm the details are accurate.', assign: 'creator' },
+    { key: 'traveller', label: 'Requested by', role: 'requesting_staff', seq: 1, declaration: 'I request this travel clearance and confirm the details are accurate.', assign: 'creator' },
     { key: 'supervisor', label: 'Supervisor who proposed the mission', role: 'director_dept', seq: 2, declaration: 'I proposed this mission and confirm its purpose.', assign: 'field:supervisor' },
     { key: 'admin_costs', label: 'Costs (Administrator)', role: 'admin', seq: 3, declaration: 'I entered the mission allowance and accommodation rates (items 15 to 17).' },
     { key: 'funding_check', label: 'Funding check (Accountant)', role: 'accountant', seq: 4, declaration: 'I checked the funding line and the amounts.' },

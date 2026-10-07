@@ -45,7 +45,7 @@ Frontend map (`Procurrement-fn/src`): `api/` (typed client), `auth/`, `ui/` (pri
 
 ## 4. Key design rules (do not break these)
 
-1. **Forms are data.** Change a form in `templates/definitions/*`, then **bump `VERSION` in `definitions/index.ts`** (currently 6). Seed never rewrites a version already used by documents; old documents keep their version.
+1. **Forms are data.** Change a form in `templates/definitions/*`, then **bump `VERSION` in `definitions/index.ts`** (currently 7). Seed never rewrites a version already used by documents; old documents keep their version.
 2. **Frozen after submit.** Document data cannot change after `submit`; `content_hash` = SHA-256 of `{template, version, data, attachment hashes}`. Fields with `fill_at: "<slotKey>"` (IM-08 decision, GR-06 finance action) are filled at that signature and stored with it, outside the hash.
 3. **All audit writes go through `AuditService.log`**, which takes an advisory lock inside a transaction. A past bug (writes outside a transaction) forked the chain; fixed, covered by the e2e concurrency step. Never write to `audit_events` any other way. DB triggers block UPDATE/DELETE.
 4. **Guards return HTTP 422** with `{error:{code,message,fields}}`; all errors use that one shape.

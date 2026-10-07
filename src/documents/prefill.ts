@@ -1,5 +1,6 @@
 import { Queryable } from '../db/db.service';
 import { isSigned } from '../workflow/stages';
+import { normalizeIdNumber } from '../templates/validate';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (n: any, currency = 'RWF') => `${Number(n).toLocaleString('en-US')} ${currency}`;
@@ -31,7 +32,7 @@ const supplierOf = async (q: Queryable, id: string | null) =>
 export async function prefill(q: Queryable, docType: string, c: CaseCtx | null, actor: { id: string; department?: string | null; position?: string | null }): Promise<Record<string, any>> {
   if (!c) {
     if (docType === 'IM-08') return { date_submitted: today(), version: '1.0', department_office: actor.department ?? undefined };
-    if (docType === 'TC-10') return { issued_to: actor.id, function: actor.position ?? undefined, issued_at: 'Kigali' };
+    if (docType === 'TC-10') return { traveller_type: 'internal_afs_staff', issued_to: actor.id, id_type: 'rwanda_national_id', function: actor.position ?? undefined, issued_at: 'Kigali' };
     return {};
   }
   const pr = await latest(q, c.id, 'PR-01');
@@ -105,6 +106,11 @@ export async function prefill(q: Queryable, docType: string, c: CaseCtx | null, 
 /** Server controlled values re-derived on every save and at submit (controls, case references). */
 export async function deriveAuto(q: Queryable, docType: string, data: Record<string, any>, c: CaseCtx | null): Promise<Record<string, any>> {
   const out = { ...data };
+  if (docType === 'TC-10') {
+    if (typeof out.id_number === 'string') out.id_number = normalizeIdNumber(out.id_number);
+    // only one of internal staff / external name is kept
+    if (out.traveller_type === 'external') delete out.issued_to; else if (out.traveller_type) delete out.issued_to_name;
+  }
   if (!c) return out;
   if (['QC-02', 'QE-03', 'PA-04', 'PR-01'].includes(docType)) out.request_no = c.request_no;
   if (docType === 'PA-04') {

@@ -271,7 +271,7 @@ ok(allPerms.every((p) => adminMe.permissions.includes(p)), 'admin /me lists ever
 must(await call('GET', '/reports/spend', T.admin), 200, 'admin can read reports');
 const adminCase = must(await call('POST', '/cases', T.admin, { project: 'Admin case', budget_line_id: bl.id }), 201, 'admin can create a procurement case');
 must(await call('PATCH', `/cases/${adminCase.id}`, T.admin, { market_check_required: true }), 200, 'admin can configure a case');
-must(await call('POST', '/lookups/suppliers', T.admin, { name: `Admin supplier ${Date.now()}` }), 201, 'admin can add a supplier from a form');
+must(await call('POST', '/lookups/suppliers', T.admin, { name: `Zz admin supplier ${Date.now()}`, phone: '+250788000009', email: 'admin.supplier@example.com' }), 201, 'admin can add a supplier from a form');
 must(await call('POST', '/documents', T.admin, { doc_type: 'GR-06' }), 201, 'admin can create a GR-06 request');
 
 console.log('\n== budget lines: external funding, baseline, inline create');
@@ -295,7 +295,13 @@ const tcBase = {
   departure_date: '2026-11-02', departure_place: 'Kigali', return_date: '2026-11-04', duration_days: 3, transport: ['office_vehicle'],
 };
 let tc = must(await call('POST', '/documents', T.staff, { doc_type: 'TC-10', data: { ...tcBase, allowance_per_day: money(99_999) } }), 201, 'staff creates a TC-10 draft');
-ok(tc.data.issued_to === me.id && tc.data.issued_at === 'Kigali', 'traveller and place of issue prefilled');
+ok(tc.data.issued_to === me.id && tc.data.issued_at === 'Kigali' && tc.data.traveller_type === 'internal_afs_staff' && tc.data.id_type === 'rwanda_national_id', 'internal traveller, ID type and place of issue prefilled');
+const badId = must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { id_number: '12345' } }), 200, 'save a wrong national ID');
+ok(/16 digits/.test(badId.validation?.errors?.id_number ?? ''), 'autosave flags the national ID right away');
+const badSubmit = await call('POST', `/documents/${tc.id}/submit`, T.staff);
+ok(badSubmit.http === 422 && !!badSubmit.error.fields.id_number, 'submit refuses a wrong national ID');
+const spaced = must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { id_number: '1 1990 8 0012345 6 78' } }), 200, 'national ID typed with spaces');
+ok(spaced.data.id_number === '1199080012345678', 'ID stored without spaces');
 ok(tc.data.allowance_per_day === undefined && tc.data.total_amount === undefined, 'requester cannot set the allowance or total at create');
 must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { accommodation_per_day: money(1), return_date: '2026-11-01' } }), 200, 'save a return date before departure');
 ok((await getDoc(tc.id, T.staff)).data.accommodation_per_day === undefined, 'requester cannot set accommodation on save');
@@ -318,6 +324,15 @@ ok(tc.data.allowance_per_day?.amount === 20_000 && tc.data.total_amount?.amount 
 must(await sign(tc.id, 'funding_check', T.accountant, tc), 201, 'accountant checks funding');
 must(await sign(tc.id, 'approved_by', T.pi, tc), 201, 'PI approves');
 ok((await getDoc(tc.id, T.staff)).state === 'signed', 'TC-10 fully signed');
+
+const extBase = { ...tcBase, traveller_type: 'external', issued_to_name: 'Jane Visitor', function: 'Partner researcher', id_type: 'passport', id_number: 'ab12' };
+let ext = must(await call('POST', '/documents', T.staff, { doc_type: 'TC-10', data: extBase }), 201, 'staff creates a TC-10 for an external traveller');
+ok(ext.data.issued_to === undefined && ext.data.issued_to_name === 'Jane Visitor', 'external traveller keeps the typed name, not a staff account');
+const extBad = await call('POST', `/documents/${ext.id}/submit`, T.staff);
+ok(extBad.http === 422 && /passport/.test(extBad.error.fields.id_number ?? ''), 'submit refuses a wrong passport number');
+must(await call('PATCH', `/documents/${ext.id}`, T.staff, { data: { id_number: 'pc 1234567' } }), 200, 'fix the passport number');
+ext = must(await call('POST', `/documents/${ext.id}/submit`, T.staff), 201, 'external TC-10 submits');
+ok(ext.data.id_number === 'PC1234567', 'passport stored in upper case without spaces');
 
 if (failures.length) { console.log(`\n${passed} passed, ${failures.length} FAILED:`); failures.forEach((f) => console.log(' -', f)); process.exit(1); }
 console.log(`\nALL GOOD: ${passed} checks passed`);
