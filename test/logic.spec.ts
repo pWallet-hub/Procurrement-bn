@@ -37,6 +37,8 @@ describe('travel clearance (TC-10)', () => {
   it('total = (allowance + accommodation) per day × duration', () => {
     const d = applyComputed(tpl('TC-10'), { allowance_per_day: { amount: 20000, currency: 'RWF' }, accommodation_per_day: { amount: 30000, currency: 'RWF' }, duration_days: 3 });
     expect(d.total_amount).toEqual({ amount: 150000, currency: 'RWF' });
+    const withTransport = applyComputed(tpl('TC-10'), { allowance_per_day: { amount: 20000, currency: 'RWF' }, accommodation_per_day: { amount: 30000, currency: 'RWF' }, transport_cost: { amount: 12000, currency: 'RWF' }, duration_days: 3 });
+    expect(withTransport.total_amount).toEqual({ amount: 162000, currency: 'RWF' });
   });
   it('items 15 to 17 belong to the admin step: skipped at submit, required when the admin signs, never set by the requester', () => {
     const t = tpl('TC-10');
@@ -46,6 +48,9 @@ describe('travel clearance (TC-10)', () => {
     expect(atSubmit.program).toBe('required');
     expect(validateData(t, {}, true, 'admin_costs').allowance_per_day).toBe('required');
     expect(withoutFillAt(t, { program: 'p', allowance_per_day: 1, total_amount: 2 })).toEqual({ program: 'p' });
+    // an administrator may fill the costs in the draft (slot admin_costs has draft_fill); only that slot's fields are kept
+    expect(t.signature_slots.filter((x) => x.draft_fill).map((x) => x.key)).toEqual(['admin_costs']);
+    expect(withoutFillAt(t, { program: 'p', transport_cost: 1, total_amount: 2 }, new Set(['admin_costs']))).toEqual({ program: 'p', transport_cost: 1, total_amount: 2 });
   });
   it('validates a Rwanda national ID or a passport number', () => {
     expect(idDocumentError('rwanda_national_id', '1 1990 8 0012345 6 78')).toBeNull();

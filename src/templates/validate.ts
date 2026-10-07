@@ -162,10 +162,12 @@ export function validateFull(tpl: Tpl, data: Record<string, any>, strict: boolea
       checkField(f, data[f.key], f.key, data, strict || !!fillAt, out);
     }
   }
-  // rules between fields (dates in order, totals, ...) for the fields that are themselves valid
-  if (!fillAt && tpl.code && CROSS_CHECKS[tpl.code]) {
+  // rules between fields (dates in order, totals, ...) for the fields that are themselves valid;
+  // when a slot signs, only the rules about the fields that slot fills
+  if (tpl.code && CROSS_CHECKS[tpl.code]) {
+    const slotFields = fillAt ? new Set(tpl.schema.sections.flatMap((s) => s.fields).filter((f) => f.fill_at === fillAt).map((f) => f.key)) : null;
     for (const p of CROSS_CHECKS[tpl.code](data)) {
-      if (out.errors[p.path]) continue;
+      if (out.errors[p.path] || (slotFields && !slotFields.has(p.path.split(/[.[]/)[0]))) continue;
       out.errors[p.path] = p.error;
       out.hints[p.path] = p.hint;
     }
@@ -206,9 +208,20 @@ export function pickKnown(tpl: Pick<TemplateDef, 'schema'>, data: Record<string,
   return Object.fromEntries(Object.entries(data).filter(([k]) => keys.has(k)));
 }
 
-/** Drop fields filled at a later signature slot (and their "other" text): only that slot's signer sets them, at signing. */
-export function withoutFillAt(tpl: Pick<TemplateDef, 'schema'>, data: Record<string, any>): Record<string, any> {
+/**
+ * Drop fields filled at a later signature slot (and their "other" text): only that slot's signer sets them, at signing.
+ * `keep`: slots whose fields stay, e.g. because the person editing the draft holds that slot's role (an administrator
+ * fills the TC-10 costs while creating the clearance).
+ */
+export function withoutFillAt(tpl: Pick<TemplateDef, 'schema'>, data: Record<string, any>, keep: Set<string> = new Set()): Record<string, any> {
   const later = new Set<string>();
-  for (const s of tpl.schema.sections) for (const f of s.fields) if (f.fill_at) { later.add(f.key); later.add(`${f.key}_other`); }
+  for (const s of tpl.schema.sections) for (const f of s.fields) if (f.fill_at && !keep.has(f.fill_at)) { later.add(f.key); later.add(`${f.key}_other`); }
   return Object.fromEntries(Object.entries(data).filter(([k]) => !later.has(k)));
+}
+
+/** Slots whose fields already have a value in the data (entered earlier by someone allowed to). */
+export function slotsWithValues(tpl: Pick<TemplateDef, 'schema'>, data: Record<string, any>): Set<string> {
+  const out = new Set<string>();
+  for (const s of tpl.schema.sections) for (const f of s.fields) if (f.fill_at && f.type !== 'computed' && !blank(data[f.key])) out.add(f.fill_at);
+  return out;
 }

@@ -328,7 +328,8 @@ const TC10: PaperBlock[] = [
     [V('9. **Supervisor who proposed the mission:** {supervisor:50}  {@supervisor.signature?}', { span: 4, h: 30 })],
     [V('10. **Destination:** {destination:26}', { span: 2 }), V('11. **Date and place of departure:** {departure_date}\n{departure_place:40}', { span: 2 })],
     [V('12. **Returning date:** {return_date}', { span: 2 }), V('13. **Duration:** {duration_days:6} (days)'), V('14. **Means of transport :**\n{transport}')],
-    [V('15. **Mission allowance per day :**\n{allowance_per_day:26}'), V('16. **Accommodation & Incidental per day :**\n{accommodation_per_day:26}', { span: 2 }), V('17. **Total Amount** :\n{total_amount:26}')],
+    [V('15. **Mission allowance per day :**\n{allowance_per_day:26}'), V('16. **Accommodation & Incidental per day :**\n{accommodation_per_day:26}', { span: 2 }), V('**Transport (whole mission) :**\n{transport_cost:20}\n{transport_details?}')],
+    [V('17. **Total Amount** :  **{total_amount:26}**', { span: 4, sub: '(15 + 16) × duration (days) + transport' })],
   ] },
   { t: 'grid', cols: [58, 42], frame: 'none', dots: true, rows: [
     [V('Issued at {issued_at:18} On {@approved_by.date}\n\n**Approved By:** {@approved_by.name}\n{@approved_by.signature?}\n\n**Authorized Signature & Stamp**', { h: 110 }),

@@ -168,6 +168,11 @@ in `src/templates/paper-layout.ts`; the frontend has an identical copy (`feature
 (`src/pdf/blocks-pdf.ts`) draws the same blocks, so screen and PDF match. Layouts live in `src/templates/definitions/layouts.ts`.
 Templates without `blocks` (older versions) still print section by section.
 
+### Addendum 2c (template version 9): draft filling of later-slot fields
+`SlotDef.draft_fill?: boolean`. When true, a user holding that slot's role may fill the slot's `fill_at` fields while editing the
+draft (TC-10 `admin_costs`: an administrator enters items 15, 16 and the transport cost when creating the clearance). Those values
+are frozen at submit. For anyone else the server still drops them. TC-10 `total_amount` = (allowance + accommodation) × days + `transport_cost`.
+
 ## Addendum 3
 `POST /auth/change-password` (signed in) body `{current_password, new_password}` (min 10 chars) -> `{ok:true}`; other sessions are signed out. 400 with `fields.current_password` when wrong.
 

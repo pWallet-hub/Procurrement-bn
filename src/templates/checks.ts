@@ -108,6 +108,7 @@ export const CROSS_CHECKS: Record<string, Check> = {
         out.push({ path: 'duration_days', error: `(${d.duration_days}) does not match the dates ${dmy(d.departure_date)} to ${dmy(d.return_date)}`, hint: `Enter ${span + 1} (departure and return day both counted), or correct the dates.` });
       }
     }
+    out.push(...sameCurrency('transport_cost', [d.allowance_per_day, d.accommodation_per_day, d.transport_cost], 'the mission allowance, accommodation and transport'));
     if (d.traveller_type !== 'external' && d.supervisor && d.supervisor === d.issued_to) {
       out.push({ path: 'supervisor', error: 'is the same person as the traveller', hint: 'Choose the supervisor who proposed the mission; it cannot be the traveller.' });
     }

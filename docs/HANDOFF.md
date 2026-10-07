@@ -45,7 +45,7 @@ Frontend map (`Procurrement-fn/src`): `api/` (typed client), `auth/`, `ui/` (pri
 
 ## 4. Key design rules (do not break these)
 
-1. **Forms are data.** Change a form in `templates/definitions/*`, then **bump `VERSION` in `definitions/index.ts`** (currently 8). Seed never rewrites a version already used by documents; old documents keep their version.
+1. **Forms are data.** Change a form in `templates/definitions/*`, then **bump `VERSION` in `definitions/index.ts`** (currently 9). Seed never rewrites a version already used by documents; old documents keep their version.
 2. **Frozen after submit.** Document data cannot change after `submit`; `content_hash` = SHA-256 of `{template, version, data, attachment hashes}`. Fields with `fill_at: "<slotKey>"` (IM-08 decision, GR-06 finance action) are filled at that signature and stored with it, outside the hash.
 3. **All audit writes go through `AuditService.log`**, which takes an advisory lock inside a transaction. A past bug (writes outside a transaction) forked the chain; fixed, covered by the e2e concurrency step. Never write to `audit_events` any other way. DB triggers block UPDATE/DELETE.
 4. **Guards return HTTP 422** with `{error:{code,message,fields}}`; all errors use that one shape.
@@ -83,7 +83,7 @@ Mailpit (dev inbox) shows every e-mail, invite and supplier signing link.
 ```bash
 cd Procurrement-bn
 npm test                                                     # 11 unit tests
-API=http://localhost:3100/api/v1 MAILPIT_PORT=8125 COMPOSE_DIR=$PWD node scripts/e2e.mjs   # 171 checks; full case PR-01 -> closed + contract + IM-08 + saved signature + tamper + audit concurrency + budget lines + TC-10
+API=http://localhost:3100/api/v1 MAILPIT_PORT=8125 COMPOSE_DIR=$PWD node scripts/e2e.mjs   # 181 checks; full case PR-01 -> closed + contract + IM-08 + saved signature + tamper + audit concurrency + budget lines + TC-10
 ```
 e2e flags: `E2E_REMOTE=1` (against a deployed server: skips steps needing local Mailpit/Docker), `E2E_SOFT=1` (continue after failures and summarise), `COMPOSE_DIR` (folder whose compose project holds Postgres, used for the tamper test). **It creates test data**: only run against demo/test databases.
 
@@ -131,6 +131,10 @@ State when last tested (2026-10-05):
   field type or `Field.hint`). Checks between fields (`src/templates/checks.ts`) run on every autosave, not only at submit. Drafts also
   return `validation.missing` (what submit would refuse), shown as a "Still to complete" checklist; the error summary links to each field.
   The case delivery date (and PA-04 delivery date) can no longer be in the future.
+- **TC-10 costs (version 9).** Mission money now includes a transport cost for the whole trip (+ transport details);
+  total = (15 + 16) × days + transport. Only administrators set the costs: either in the draft (slot `admin_costs` has
+  `draft_fill: true`, so a holder of its role may fill its `fill_at` fields while editing; the server strips them for anyone else)
+  or at the costs step. Costs entered in the draft are frozen with the document; the admin still signs the costs step.
 
 ## 9. Backlog (suggested order)
 
@@ -157,7 +161,7 @@ State when last tested (2026-10-05):
 
 1. Clone both repos (`Procurrement-bn`, `Procurrement-fn`) next to each other. Read `Procurrement-bn/docs/HANDOFF.md` (this file) and `docs/API-CONTRACT.md`.
 2. Install Docker, Node 22+. Start the backend (section 5). Check `/api/v1/health`.
-3. Run `npm test` and `scripts/e2e.mjs` (expect `ALL GOOD: 171 checks passed`).
+3. Run `npm test` and `scripts/e2e.mjs` (expect `ALL GOOD: 181 checks passed`).
 4. Start the frontend, sign in as `staff@afs.local`, create a case, and walk it through with the demo accounts.
 5. Pick up the backlog from section 9, starting with production go-live.
 

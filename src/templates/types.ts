@@ -11,6 +11,7 @@ export interface ComputedSpec {
   fields?: string[];        // mul: row columns · add / add_times: top level fields · variance_mid: [amountColumn, lowField, highField]
   table?: string;           // sum_rows / sum_mul: table key
   field?: string;           // sum_rows: column to add up · add_times: top level number the sum is multiplied by
+  plus?: string[];          // add_times: top level amounts added once after the multiplication (e.g. the TC-10 transport cost)
 }
 
 export interface Field {
@@ -36,6 +37,8 @@ export interface SlotDef {
   key: string; label: string; role: string; seq: number; group?: string; declaration: string;
   /** who signs: the creator, the case requester, or the user picked in a user_ref field (`field:<key>`); otherwise anyone with the role */
   assign?: 'creator' | 'case_requester' | `field:${string}`; external?: boolean;
+  /** a person holding this slot's role may already fill its `fill_at` fields in the draft (TC-10 costs by an administrator) */
+  draft_fill?: boolean;
 }
 
 export interface WorkflowDef {

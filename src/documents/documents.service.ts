@@ -8,7 +8,7 @@ import { canonical, documentHash, randomToken, sha256 } from '../common/hash';
 import { accessParams, docVisible } from '../common/access';
 import { TemplatesService, TemplateRow } from '../templates/templates.service';
 import { applyComputed } from '../templates/computed';
-import { collectFileIds, draftValidation, pickKnown, validateFull, withoutFillAt } from '../templates/validate';
+import { collectFileIds, draftValidation, pickKnown, slotsWithValues, validateFull, withoutFillAt } from '../templates/validate';
 import { SlotDef } from '../templates/types';
 import { runGuards } from '../workflow/guards';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -42,6 +42,14 @@ export class DocumentsService {
 
   private canEditDraft(doc: any, user: AuthUser) {
     return doc.created_by === user.id || (EDIT_PERM[doc.doc_type] ? user.permissions.includes(EDIT_PERM[doc.doc_type]) : false);
+  }
+
+  /**
+   * Later signature slots whose fields this user may already fill in the draft: they hold the slot's role
+   * (an administrator fills the TC-10 costs while creating the clearance). Everyone else cannot set them.
+   */
+  private draftFillSlots(tpl: { signature_slots: SlotDef[] }, user: AuthUser): Set<string> {
+    return new Set(tpl.signature_slots.filter((s) => s.draft_fill && user.roles.includes(s.role)).map((s) => s.key));
   }
 
   private eligible(slot: any, user: AuthUser) {
@@ -130,8 +138,9 @@ export class DocumentsService {
     // date fields marked default:"today" start with the creation date (the person can still change it)
     const todayStr = new Date().toISOString().slice(0, 10);
     const dateDefaults = Object.fromEntries(tpl.schema.sections.flatMap((sec: any) => sec.fields).filter((f: any) => f.type === 'date' && f.default === 'today').map((f: any) => [f.key, todayStr]));
-    const merged = pickKnown(tpl as any, { ...dateDefaults, ...pre, ...withoutFillAt(tpl, initial) });
-    const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(q, docType, merged, c)));
+    const fillable = this.draftFillSlots(tpl, user);
+    const merged = pickKnown(tpl as any, { ...dateDefaults, ...pre, ...withoutFillAt(tpl, initial, fillable) });
+    const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(q, docType, merged, c)), fillable);
     const doc = (await q.query(
       `INSERT INTO documents (case_id, template_id, doc_type, data, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
       [caseId, tpl.id, docType, JSON.stringify(data), user.id])).rows[0];
@@ -174,7 +183,10 @@ export class DocumentsService {
       // readonly (server controlled) fields cannot be overwritten by the client
       const ro = new Set(tpl.schema.sections.flatMap((s: any) => s.fields).filter((f: any) => f.readonly || f.type === 'case_ref' || f.type === 'computed').map((f: any) => f.key));
       for (const k of Object.keys(known)) if (ro.has(k)) delete known[k];
-      const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, { ...doc.data, ...withoutFillAt(tpl, known) }, cc)));
+      // fields of later slots: only a person holding that slot's role may set them; values already entered stay
+      const fillable = this.draftFillSlots(tpl, user);
+      const keep = new Set([...fillable, ...slotsWithValues(tpl as any, doc.data)]);
+      const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, { ...doc.data, ...withoutFillAt(tpl, known, fillable) }, cc)), keep);
       const validation = draftValidation(tpl as any, data);
       const upd = (await c.query('UPDATE documents SET data = $2, updated_at = now() WHERE id = $1 RETURNING *', [id, JSON.stringify(data)])).rows[0];
       return { upd, validation };
@@ -193,7 +205,8 @@ export class DocumentsService {
       const tpl = await this.templates.byId(doc.template_id);
       const cc = doc.case_id ? await loadCaseCtx(c, doc.case_id) : null;
       const caseRow = doc.case_id ? (await c.query('SELECT * FROM cases WHERE id = $1', [doc.case_id])).rows[0] : null;
-      const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, pickKnown(tpl as any, doc.data), cc)));
+      // values of later slots entered in the draft by someone holding that role (see draftFillSlots) are frozen with the document
+      const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, pickKnown(tpl as any, doc.data), cc)), slotsWithValues(tpl as any, doc.data));
       await runGuards(tpl.workflow.guards_on_submit, { q: c, tpl, doc, data, caseRow, actorId: user.id });
 
       const fileIds = collectFileIds(tpl as any, data);

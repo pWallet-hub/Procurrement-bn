@@ -294,7 +294,7 @@ const tcBase = {
   expected_results: 'Partners briefed', purpose: 'Field visit', supervisor: dirMe.id, destination: 'Musanze',
   departure_date: '2026-11-02', departure_place: 'Kigali', return_date: '2026-11-04', duration_days: 3, transport: ['office_vehicle'],
 };
-let tc = must(await call('POST', '/documents', T.staff, { doc_type: 'TC-10', data: { ...tcBase, allowance_per_day: money(99_999) } }), 201, 'staff creates a TC-10 draft');
+let tc = must(await call('POST', '/documents', T.staff, { doc_type: 'TC-10', data: { ...tcBase, allowance_per_day: money(99_999), transport_cost: money(5) } }), 201, 'staff creates a TC-10 draft');
 ok(tc.data.issued_to === me.id && tc.data.issued_at === 'Kigali' && tc.data.traveller_type === 'internal_afs_staff' && tc.data.id_type === 'rwanda_national_id', 'internal traveller, ID type and place of issue prefilled');
 const badId = must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { id_number: '12345' } }), 200, 'save a wrong national ID');
 ok(/16 digits/.test(badId.validation?.errors?.id_number ?? ''), 'autosave flags the national ID right away');
@@ -302,9 +302,10 @@ const badSubmit = await call('POST', `/documents/${tc.id}/submit`, T.staff);
 ok(badSubmit.http === 422 && !!badSubmit.error.fields.id_number, 'submit refuses a wrong national ID');
 const spaced = must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { id_number: '1 1990 8 0012345 6 78' } }), 200, 'national ID typed with spaces');
 ok(spaced.data.id_number === '1199080012345678', 'ID stored without spaces');
-ok(tc.data.allowance_per_day === undefined && tc.data.total_amount === undefined, 'requester cannot set the allowance or total at create');
-must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { accommodation_per_day: money(1), return_date: '2026-11-01' } }), 200, 'save a return date before departure');
-ok((await getDoc(tc.id, T.staff)).data.accommodation_per_day === undefined, 'requester cannot set accommodation on save');
+ok(tc.data.allowance_per_day === undefined && tc.data.transport_cost === undefined && tc.data.total_amount === undefined, 'requester cannot set the allowance, transport or total at create');
+must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { accommodation_per_day: money(1), transport_cost: money(1), return_date: '2026-11-01' } }), 200, 'save a return date before departure');
+const afterSave = (await getDoc(tc.id, T.staff)).data;
+ok(afterSave.accommodation_per_day === undefined && afterSave.transport_cost === undefined, 'requester cannot set accommodation or transport on save');
 const badDates = await call('POST', `/documents/${tc.id}/submit`, T.staff);
 ok(badDates.http === 422 && !!badDates.error.fields?.return_date, 'submit rejects a return before departure');
 ok(/on or after 02\/11\/2026/.test(badDates.error.hints?.return_date ?? ''), 'the error says how to fix the return date');
@@ -320,13 +321,26 @@ must(await sign(tc.id, 'supervisor', dirDept, tc), 201, 'supervisor signs');
 ok((await call('GET', '/signing/tasks', T.admin)).items.some((t) => t.document_id === tc.id && t.slot_key === 'admin_costs'), 'costs step is in the admin task list');
 must(await sign(tc.id, 'admin_costs', T.accountant, tc, { data: { allowance_per_day: money(20_000), accommodation_per_day: money(30_000) } }), 403, 'only the admin fills the costs step');
 const noCosts = await sign(tc.id, 'admin_costs', T.admin, tc);
-ok(noCosts.http === 422 && !!noCosts.error.fields.allowance_per_day, 'admin must enter the allowance and accommodation');
-must(await sign(tc.id, 'admin_costs', T.admin, tc, { data: { allowance_per_day: money(20_000), accommodation_per_day: money(30_000), total_amount: money(1) } }), 201, 'admin enters items 15 and 16 and signs');
+ok(noCosts.http === 422 && !!noCosts.error.fields.allowance_per_day && !!noCosts.error.fields.transport_cost, 'admin must enter the allowance, accommodation and transport');
+must(await sign(tc.id, 'admin_costs', T.admin, tc, { data: { allowance_per_day: money(20_000), accommodation_per_day: money(30_000), transport_cost: money(15_000), total_amount: money(1) } }), 201, 'admin enters items 15, 16 and transport and signs');
 tc = await getDoc(tc.id, T.staff);
-ok(tc.data.allowance_per_day?.amount === 20_000 && tc.data.total_amount?.amount === 150_000, 'total = (allowance + accommodation) x days, computed by the server');
+ok(tc.data.allowance_per_day?.amount === 20_000 && tc.data.total_amount?.amount === 165_000, 'total = (allowance + accommodation) x days + transport, computed by the server');
 must(await sign(tc.id, 'funding_check', T.accountant, tc), 201, 'accountant checks funding');
 must(await sign(tc.id, 'approved_by', T.pi, tc), 201, 'PI approves');
 ok((await getDoc(tc.id, T.staff)).state === 'signed', 'TC-10 fully signed');
+
+// an administrator creating a clearance fills the costs (items 15 to 17 and transport) in the draft already
+const adminCosts = { allowance_per_day: money(20_000), accommodation_per_day: money(30_000), transport_cost: money(12_000), transport_details: 'Bus Kigali-Musanze return' };
+let tcA = must(await call('POST', '/documents', T.admin, { doc_type: 'TC-10', data: { ...tcBase, issued_to: me.id, ...adminCosts } }), 201, 'admin creates a TC-10 with the costs filled in');
+ok(tcA.data.transport_cost?.amount === 12_000 && tcA.data.total_amount?.amount === 162_000, 'admin draft keeps the costs; total = (15 + 16) x days + transport');
+tcA = must(await call('PATCH', `/documents/${tcA.id}`, T.admin, { data: { transport_cost: money(10_000) } }), 200, 'admin changes the transport cost in the draft');
+ok(tcA.data.total_amount?.amount === 160_000, 'total follows the transport cost while editing');
+tcA = must(await call('POST', `/documents/${tcA.id}/submit`, T.admin), 201, 'admin submits the TC-10');
+ok(tcA.data.transport_cost?.amount === 10_000 && tcA.data.total_amount?.amount === 160_000, 'costs entered by the admin are frozen with the clearance');
+must(await sign(tcA.id, 'traveller', T.admin, tcA), 201, 'admin signs as the requester');
+must(await sign(tcA.id, 'supervisor', dirDept, tcA), 201, 'supervisor signs the admin-created clearance');
+must(await sign(tcA.id, 'admin_costs', T.admin, tcA), 201, 'admin confirms the costs at the costs step without retyping them');
+ok((await getDoc(tcA.id, T.admin)).data.total_amount?.amount === 160_000, 'total unchanged after the costs step');
 
 const extBase = { ...tcBase, traveller_type: 'external', issued_to_name: 'Jane Visitor', function: 'Partner researcher', id_type: 'passport', id_number: 'ab12' };
 let ext = must(await call('POST', '/documents', T.staff, { doc_type: 'TC-10', data: extBase }), 201, 'staff creates a TC-10 for an external traveller');

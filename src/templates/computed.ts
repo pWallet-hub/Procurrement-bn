@@ -44,7 +44,8 @@ export function applyComputed(tpl: Pick<TemplateDef, 'schema'>, input: Record<st
       data[f.key] = wrap(vals.reduce((s, v) => s + amt(v), 0), f, vals.map(cur).find(Boolean));
     } else if (sp.op === 'add_times') {
       const vals = sp.fields!.map((k) => data[k]);
-      data[f.key] = wrap(vals.reduce((s, v) => s + amt(v), 0) * amt(data[sp.field!]), f, vals.map(cur).find(Boolean));
+      const extra = (sp.plus ?? []).map((k) => data[k]);
+      data[f.key] = wrap(vals.reduce((s, v) => s + amt(v), 0) * amt(data[sp.field!]) + extra.reduce((s, v) => s + amt(v), 0), f, [...vals, ...extra].map(cur).find(Boolean));
     }
   }
   return data;
