@@ -306,7 +306,10 @@ ok(tc.data.allowance_per_day === undefined && tc.data.total_amount === undefined
 must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { accommodation_per_day: money(1), return_date: '2026-11-01' } }), 200, 'save a return date before departure');
 ok((await getDoc(tc.id, T.staff)).data.accommodation_per_day === undefined, 'requester cannot set accommodation on save');
 const badDates = await call('POST', `/documents/${tc.id}/submit`, T.staff);
-ok(badDates.http === 422 && badDates.error.code === 'guard.travel_clearance_valid', 'submit rejects a return before departure');
+ok(badDates.http === 422 && !!badDates.error.fields?.return_date, 'submit rejects a return before departure');
+ok(/on or after 02\/11\/2026/.test(badDates.error.hints?.return_date ?? ''), 'the error says how to fix the return date');
+const saved = await getDoc(tc.id, T.staff);
+ok(!!saved.validation?.errors?.return_date && !!saved.validation?.hints?.return_date, 'the draft shows the date problem with a hint before submit');
 must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { return_date: '2026-11-04' } }), 200, 'fix the return date');
 tc = must(await call('POST', `/documents/${tc.id}/submit`, T.staff), 201, 'submit TC-10 without costs');
 must(await sign(tc.id, 'traveller', T.staff, tc), 201, 'traveller signs');

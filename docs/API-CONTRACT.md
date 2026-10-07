@@ -2,7 +2,8 @@
 
 Base URL `/api/v1` (dev: `http://localhost:3000/api/v1`, Vite proxies `/api` to it).
 Auth: `Authorization: Bearer <access_token>`. JSON everywhere except uploads (multipart) and PDFs.
-Errors: HTTP 4xx/5xx with `{"error": {"code": "guard.min_quotations", "message": "...", "fields": {"items[0].qty": "must be > 0"}}}`.
+Errors: HTTP 4xx/5xx with `{"error": {"code": "guard.min_quotations", "message": "...", "fields": {"items[0].qty": "must be greater than 0"}, "hints": {"items[0].qty": "Enter a number greater than 0."}}}`.
+`hints` (optional, same paths as `fields`) says how to fix each problem; `hints._form` is advice for the whole form. Show it next to the field.
 Guard failures and validation failures are HTTP 422. 401 = not signed in / token expired (use refresh), 403 = no permission.
 Lists: `?limit=&cursor=` -> `{ "items": [...], "next_cursor": string|null }`.
 Money values are `{ "amount": number, "currency": "RWF"|"USD"|"EUR" }`. Dates are ISO `YYYY-MM-DD`, timestamps ISO 8601.
@@ -90,7 +91,7 @@ NextAction = { document_id, doc_type, slot_key, label, role, assigned_user:{id,f
 | `POST /documents` | standalone `GR-06` / `IM-08`: `{doc_type, data?}` |
 | `GET /documents?doc_type=&state=&mine=` | list standalone + visible docs |
 | `GET /documents/{id}` | `Document` |
-| `PATCH /documents/{id}` | autosave. `{data: {...}}` merged at top level key level, **only in `draft`**. Returns `Document` with computed values filled and `validation:{errors:{path:msg}}` (non blocking) |
+| `PATCH /documents/{id}` | autosave. `{data: {...}}` merged at top level key level, **only in `draft`**. Returns `Document` with computed values filled and `validation:{errors, missing, hints}` (non blocking, see `Document`) |
 | `POST /documents/{id}/submit` | validate -> freeze -> hash -> start signing. 422 with `error.fields` on failure |
 | `POST /documents/{id}/slots/{slotKey}/sign` | `{content_hash, declaration_accepted, conflict_confirmed?, method:"draw"|"type"|"upload", signature_image?:dataURL, signature_text?}` -> `{document_state, signed_at, next_slots}` |
 | `POST /documents/{id}/slots/{slotKey}/decline` | `{reason}` |
@@ -106,7 +107,10 @@ Document = { id, case_id|null, request_no|null, doc_type, title, state:"draft"|"
   slots: [{slot_key,label,role_code,seq,group,status:"pending"|"waiting"|"signed"|"declined"|"skipped",declaration,
            assigned_user:{id,full_name}|null, signature:{signer_name,signed_at,method,image_url?}|null}],
   can: { edit:boolean, submit:boolean, sign:string[], decline:string[], revise:boolean, cancel:boolean },
-  returned_reason?: string|null, pdf_available: boolean, validation?: {errors:{[path]:string}} }
+  returned_reason?: string|null, pdf_available: boolean, validation?: {errors:{[path]:string}, missing:{[path]:string}, hints:{[path]:string}} }
+// validation (drafts only): `errors` = problems in what was entered, including checks between fields (dates in order, duplicate
+// suppliers, price range, totals, TC-10 duration ...); `missing` = what submit would still refuse (required fields, row counts);
+// `hints` = how to fix each path of both. Slot signatures carry `signer_position` (job title) when known.
 ```
 Use `document.can.*` to show/hide buttons - never re-derive permissions in the client.
 
@@ -155,6 +159,14 @@ Every template now has `schema.paper` (type `PaperMeta`) describing how the prin
 Templates are version 2 now. The reference PDFs are in `/home/kevin/others/afs/temp/`. Page images of them: `/tmp/claude-1000/-home-kevin-others-afs/88021a09-8939-4de0-af8b-3d99fb066778/scratchpad/pdfimg/*.png`.
 The logo is `/logo.png` (served from the frontend `public/` folder).
 Section titles already carry the printed letters ("A. Request Information"...).
+
+### Addendum 2b (template version 8): printed layout per form
+`PaperMeta` also has `header?: "box"|"title"`, `subtitle?` and `blocks?: PaperBlock[]`: the body of the form exactly as on the
+reference forms in `docs/reference-forms` (headings, label/value grids with column and row spans, item tables padded to the printed
+row count, check boxes, sign-off boxes). The format and the cell markup (`{field}`, `{field|option}`, `{@slot.name}` ...) are documented
+in `src/templates/paper-layout.ts`; the frontend has an identical copy (`features/paper/layoutCore.ts`) and the PDF renderer
+(`src/pdf/blocks-pdf.ts`) draws the same blocks, so screen and PDF match. Layouts live in `src/templates/definitions/layouts.ts`.
+Templates without `blocks` (older versions) still print section by section.
 
 ## Addendum 3
 `POST /auth/change-password` (signed in) body `{current_password, new_password}` (min 10 chars) -> `{ok:true}`; other sessions are signed out. 400 with `fields.current_password` when wrong.

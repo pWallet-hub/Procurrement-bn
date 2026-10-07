@@ -40,7 +40,8 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const phoneOk = (v: string) => v.split(/[,/]/).every((p) => { const d = p.replace(/[\s()+-]/g, ''); return /^\d{7,15}$/.test(d); });
 
 const list = (labels: string[]) => (labels.length <= 1 ? labels.join('') : `${labels.slice(0, -1).join(', ')} or ${labels[labels.length - 1]}`);
-const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+/** "7. Expected results" -> "expected results" (printed item numbers are left out of hints) */
+const lower = (s: string) => { const t = s.replace(/^\d+\.\s*/, ''); return t.charAt(0).toLowerCase() + t.slice(1); };
 
 /** How to fix a field, by type. A field's own `hint` wins. */
 export function hintFor(f: Field, error?: string): string {

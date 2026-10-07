@@ -45,7 +45,7 @@ Frontend map (`Procurrement-fn/src`): `api/` (typed client), `auth/`, `ui/` (pri
 
 ## 4. Key design rules (do not break these)
 
-1. **Forms are data.** Change a form in `templates/definitions/*`, then **bump `VERSION` in `definitions/index.ts`** (currently 7). Seed never rewrites a version already used by documents; old documents keep their version.
+1. **Forms are data.** Change a form in `templates/definitions/*`, then **bump `VERSION` in `definitions/index.ts`** (currently 8). Seed never rewrites a version already used by documents; old documents keep their version.
 2. **Frozen after submit.** Document data cannot change after `submit`; `content_hash` = SHA-256 of `{template, version, data, attachment hashes}`. Fields with `fill_at: "<slotKey>"` (IM-08 decision, GR-06 finance action) are filled at that signature and stored with it, outside the hash.
 3. **All audit writes go through `AuditService.log`**, which takes an advisory lock inside a transaction. A past bug (writes outside a transaction) forked the chain; fixed, covered by the e2e concurrency step. Never write to `audit_events` any other way. DB triggers block UPDATE/DELETE.
 4. **Guards return HTTP 422** with `{error:{code,message,fields}}`; all errors use that one shape.
@@ -83,7 +83,7 @@ Mailpit (dev inbox) shows every e-mail, invite and supplier signing link.
 ```bash
 cd Procurrement-bn
 npm test                                                     # 11 unit tests
-API=http://localhost:3100/api/v1 MAILPIT_PORT=8125 COMPOSE_DIR=$PWD node scripts/e2e.mjs   # 146 checks; full case PR-01 -> closed + contract + IM-08 + saved signature + tamper + audit concurrency + budget lines + TC-10
+API=http://localhost:3100/api/v1 MAILPIT_PORT=8125 COMPOSE_DIR=$PWD node scripts/e2e.mjs   # 171 checks; full case PR-01 -> closed + contract + IM-08 + saved signature + tamper + audit concurrency + budget lines + TC-10
 ```
 e2e flags: `E2E_REMOTE=1` (against a deployed server: skips steps needing local Mailpit/Docker), `E2E_SOFT=1` (continue after failures and summarise), `COMPOSE_DIR` (folder whose compose project holds Postgres, used for the tamper test). **It creates test data**: only run against demo/test databases.
 
@@ -114,9 +114,23 @@ State when last tested (2026-10-05):
 - **nginx → HTTPS API**: needs `proxy_set_header Host <api host>`, `proxy_ssl_server_name on`, `proxy_ssl_verify_depth 4` (Let's Encrypt chain is 3 deep), CA bundle in the image, `resolver_timeout`. Already in `nginx.conf`.
 - **Port clashes** on the previous PC came from another project (homelink). Never stop or modify containers you did not create.
 - The PDF header date and on-screen header date use the same rule (document's own date); keep them consistent.
-- PDF tables do not repeat the header row when a table spans pages.
+- PDF tables repeat their header row when they continue on a new page (layout forms, version 8+).
 - The in-memory rate limiter (`common/auth.ts`) is per process; move to Redis if the API is scaled out.
 - Printing: `@media print` CSS exists but was never exercised.
+
+## 8b. Printed layouts and validation feedback (2026-10-07)
+
+- **Forms match the reference PDFs** (`docs/reference-forms`, the source of truth). Each form's printed body is data in
+  `src/templates/definitions/layouts.ts` (format: `src/templates/paper-layout.ts`). The same layout drives the on-screen paper view
+  (`Procurrement-fn/src/features/paper/PaperBlocks.tsx` + `layoutCore.ts`, an identical copy of `paper-layout.ts`: keep them in sync)
+  and the PDF (`src/pdf/blocks-pdf.ts`). The contract keeps its own renderer (two-column clauses, letterhead on every page, address box).
+  Field labels, section titles, option labels and slot labels were aligned with the forms; stored keys and option values were kept,
+  except QC-02 `conflict_declaration`, now a radio `yes` / `n_a` as printed (was yes/no). New optional PA-04 comment fields for every control.
+  A unit test checks that every `{token}` in a layout names a real field, option or slot.
+- **Validation tells people what is wrong and how to fix it.** Every error carries a hint (`error.hints`, `validation.hints`; generic by
+  field type or `Field.hint`). Checks between fields (`src/templates/checks.ts`) run on every autosave, not only at submit. Drafts also
+  return `validation.missing` (what submit would refuse), shown as a "Still to complete" checklist; the error summary links to each field.
+  The case delivery date (and PA-04 delivery date) can no longer be in the future.
 
 ## 9. Backlog (suggested order)
 
@@ -143,7 +157,7 @@ State when last tested (2026-10-05):
 
 1. Clone both repos (`Procurrement-bn`, `Procurrement-fn`) next to each other. Read `Procurrement-bn/docs/HANDOFF.md` (this file) and `docs/API-CONTRACT.md`.
 2. Install Docker, Node 22+. Start the backend (section 5). Check `/api/v1/health`.
-3. Run `npm test` and `scripts/e2e.mjs` (expect `ALL GOOD: 146 checks passed`).
+3. Run `npm test` and `scripts/e2e.mjs` (expect `ALL GOOD: 171 checks passed`).
 4. Start the frontend, sign in as `staff@afs.local`, create a case, and walk it through with the demo accounts.
 5. Pick up the backlog from section 9, starting with production go-live.
 
