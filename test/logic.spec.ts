@@ -6,7 +6,9 @@ import { canonical, documentHash } from '../src/common/hash';
 import { eventHash } from '../src/audit/audit.service';
 import { ALL_TEMPLATES } from '../src/templates/definitions';
 import { GUARDS } from '../src/workflow/guards';
-import { EMAIL_TEMPLATES, renderEmail } from '../src/notifications/mail.service';
+import { EMAIL_TEMPLATES, MailService, renderEmail } from '../src/notifications/mail.service';
+import { NotificationsService } from '../src/notifications/notifications.service';
+import { config } from '../src/config/config';
 
 const tpl = (code: string) => ALL_TEMPLATES.find((t) => t.code === code)!;
 
@@ -29,6 +31,60 @@ describe('notification emails', () => {
       expect(email.html).toContain('https://example.org/action?token=test');
       expect(email.text).toContain('https://example.org/action?token=test');
     }
+  });
+
+  it('sends through Resend to the recipient, from MAIL_FROM', async () => {
+    const saved = { ...config.mail };
+    Object.assign(config.mail, { from: 'AfS Rwanda <procurement@example.org>', resendApiKey: 're_test' });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'msg_1' }), { status: 200 }));
+    try {
+      await expect(new MailService().send('signer@example.org', 'Please sign', '<p>hi</p>', 'hi')).resolves.toEqual({ id: 'msg_1' });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.resend.com/emails');
+      expect((init!.headers as Record<string, string>).Authorization).toBe('Bearer re_test');
+      expect(JSON.parse(init!.body as string)).toMatchObject({ from: 'AfS Rwanda <procurement@example.org>', to: 'signer@example.org', subject: 'Please sign' });
+
+      fetchMock.mockResolvedValue(new Response(JSON.stringify({ message: 'domain not verified' }), { status: 403 }));
+      await expect(new MailService().send('x@example.org', 's', 'h', 't')).rejects.toThrow('Resend email request failed (403): domain not verified');
+    } finally {
+      fetchMock.mockRestore();
+      Object.assign(config.mail, saved);
+    }
+  });
+
+  describe('recipient resolution', () => {
+    const setup = (queueAdd = jest.fn().mockResolvedValue(undefined)) => {
+      const inserted: any[][] = [];
+      const fakeDb: any = {
+        query: jest.fn(async (sql: string, params: any[]) => {
+          if (sql.startsWith('SELECT email FROM users')) return { rows: params[0] === 'u1' ? [{ email: 'user1@example.org' }] : [] };
+          inserted.push(params);
+          return { rows: [{ id: `n${inserted.length}` }] };
+        }),
+      };
+      return { svc: new NotificationsService(fakeDb, { add: queueAdd } as any), inserted, queueAdd, fakeDb };
+    };
+
+    it('looks up the address of a user, keeps an explicit external address, and links to the document', async () => {
+      const { svc, inserted, queueAdd } = setup();
+      await svc.send({ userId: 'u1', kind: 'sign_requested', subject: 'S', path: '/documents/00000000-0000-0000-0000-000000000001' });
+      await svc.send({ email: 'supplier@example.org', kind: 'external_sign', subject: 'S', vars: { link: 'https://x/sign/t' }, inApp: false });
+      expect(inserted[0].slice(0, 3)).toEqual(['u1', 'user1@example.org', 'sign_requested']);
+      expect(JSON.parse(inserted[0][3]).vars.link).toBe(`${config.appUrl}/documents/00000000-0000-0000-0000-000000000001`);
+      expect(inserted[1].slice(0, 3)).toEqual([null, 'supplier@example.org', 'external_sign']);
+      expect(JSON.parse(inserted[1][3]).vars.link).toBe('https://x/sign/t');
+      expect(queueAdd).toHaveBeenCalledTimes(2);
+    });
+
+    it('waits for flush() inside a transaction, and never fails the request when the queue is down', async () => {
+      const { svc, queueAdd } = setup(jest.fn().mockRejectedValue(new Error('redis down')));
+      const tx: any = { query: async () => ({ rows: [{ id: 'n-tx' }] }) };
+      await svc.send({ email: 'a@example.org', kind: 'returned', subject: 'S' }, tx);
+      expect(queueAdd).not.toHaveBeenCalled();
+      await expect(svc.flush()).resolves.toBeUndefined();
+      expect(queueAdd).toHaveBeenCalledWith('email', { notificationId: 'n-tx' }, { jobId: 'email-n-tx' });
+      await expect(svc.send({ email: 'b@example.org', kind: 'returned', subject: 'S' })).resolves.toBe('n1');
+    });
   });
 });
 

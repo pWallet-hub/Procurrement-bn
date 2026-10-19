@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Db, Queryable } from '../db/db.service';
 import { QueueService } from './queue.service';
 import { config } from '../config/config';
@@ -10,6 +10,7 @@ export interface SendInput {
 
 @Injectable()
 export class NotificationsService {
+  private log = new Logger('Notifications');
   constructor(private db: Db, private queue: QueueService) {}
 
   /**
@@ -26,7 +27,7 @@ export class NotificationsService {
       [i.userId ?? null, email, i.kind, JSON.stringify({ subject: i.subject, title: i.subject, message: i.subject, document_id: docId, path: i.path ?? null, vars, in_app: i.inApp !== false })],
     );
     const id = r.rows[0].id as string;
-    if (q === (this.db as Queryable)) await this.queue.add('email', { notificationId: id }, { jobId: `email-${id}` });
+    if (q === (this.db as Queryable)) await this.enqueue(id);
     else this.pending.push(id);
     return id;
   }
@@ -34,10 +35,15 @@ export class NotificationsService {
   private pending: string[] = [];
   /** enqueue e-mails recorded inside a transaction once it has committed */
   async flush() {
-    while (this.pending.length) {
-      const id = this.pending[0];
+    for (const id of this.pending.splice(0)) await this.enqueue(id);
+  }
+
+  /** The row is already stored as 'queued'; if Redis is unavailable the worker's email.requeue job picks it up, so never fail the request. */
+  private async enqueue(id: string) {
+    try {
       await this.queue.add('email', { notificationId: id }, { jobId: `email-${id}` });
-      this.pending.shift();
+    } catch (e: any) {
+      this.log.warn(`could not enqueue email ${id} (will be requeued): ${e.message}`);
     }
   }
 
