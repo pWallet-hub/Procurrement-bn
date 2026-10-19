@@ -1,13 +1,13 @@
 # Procurrement-bn
 
 Backend for the **AfS Rwanda Digital Procurement and E-Signature System** (spec: `AfS Rwanda Digital Procurement and E-Signature System Project Document.md`).
-NestJS + TypeScript, PostgreSQL, Redis (BullMQ), SeaweedFS (S3 files, replaces the unmaintained MinIO), Resend (email) with Mailpit available for local SMTP testing. Everything runs in Docker.
+NestJS + TypeScript, PostgreSQL, Redis (BullMQ), SeaweedFS (S3 files, replaces the unmaintained MinIO), and Resend for all outgoing email. Everything runs in Docker.
 
 ## Run
 
 ```bash
-cp .env.example .env          # set RESEND_API_KEY and change host ports if they clash
-docker compose up -d --build  # api + worker + postgres + redis + storage (SeaweedFS) + mailpit
+cp .env.example .env          # set RESEND_API_KEY, public APP_URL for invite links, and free host ports
+docker compose up -d --build  # api + worker + postgres + redis + storage (SeaweedFS)
 curl localhost:${API_PORT:-3000}/api/v1/health
 ```
 
@@ -16,7 +16,6 @@ Migrations and the seed (roles, permissions, the nine form templates, demo users
 | Service | Default URL |
 | --- | --- |
 | API | http://localhost:3000/api/v1 |
-| Mailpit (when `MAIL_PROVIDER=smtp`) | http://localhost:8025 |
 | S3 API (SeaweedFS, keys `afsstorage` / `afsstorage_dev_secret`) | http://localhost:8333 |
 | PostgreSQL (`afs` / `afs_dev_password`, db `afs`) | localhost:5432 |
 
@@ -24,13 +23,11 @@ Demo accounts (password `Passw0rd!dev`, no TOTP in dev): `admin@`, `staff@` (req
 
 ## Test
 
-For the full end-to-end test, set `MAIL_PROVIDER=smtp` in `.env` and restart the stack so test emails are captured by Mailpit.
-
 ```bash
 npm test                                   # unit tests: template validation, computed fields, hashing, audit chain
-API=http://localhost:3000/api/v1 MAILPIT_PORT=8025 node scripts/e2e.mjs   # full case end to end against the running stack
+API=http://localhost:3000/api/v1 node scripts/e2e.mjs   # full case end to end against the running stack
 ```
-The e2e drives PR-01 -> QC-02 -> MPV-03 -> QE-03 -> PO-09 -> supplier contract (external token signing) -> delivery -> PA-04 -> closed, then IM-08, PDF, verify and tamper checks.
+The e2e drives PR-01 -> QC-02 -> MPV-03 -> QE-03 -> PO-09 -> supplier contract (external token signing) -> delivery -> PA-04 -> closed, then IM-08, PDF, verify and tamper checks. It uses seeded `.example`/`.local` email addresses; use a separate test Resend project if you need to verify provider delivery.
 
 ## Layout
 
@@ -60,4 +57,6 @@ Also in `docs/`: [API-CONTRACT.md](docs/API-CONTRACT.md) (the API the frontend u
 
 ## Production notes (not done yet)
 
-TLS reverse proxy (Caddy) and firewall, real secrets, `TOTP_REQUIRED=true`, `NODE_ENV=production` (no demo seed, no invite links in responses), Resend email setup (`MAIL_PROVIDER=resend`, `RESEND_API_KEY`, and the verified `MAIL_FROM` sender), nightly `pg_dump` + WAL archiving off the VPS, malware scan on upload (hook marked TODO), OpenAPI file, CI pipeline. SMTP remains available by setting `MAIL_PROVIDER=smtp`.
+TLS reverse proxy (Caddy) and firewall, real secrets, `TOTP_REQUIRED=true`, `NODE_ENV=production` (no demo seed; invite links are never returned in API responses), Resend email setup (`RESEND_API_KEY` and the verified `MAIL_FROM` sender), nightly `pg_dump` + WAL archiving off the VPS, malware scan on upload (hook marked TODO), OpenAPI file, CI pipeline.
+
+Invitations, password resets, signature requests (including external suppliers), returns, completions, follow-ups, reminders, and expiry alerts use the same Resend-only queued email worker. The worker periodically re-enqueues notifications left queued if Redis was temporarily unavailable.

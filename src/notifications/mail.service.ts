@@ -1,20 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
 import { config } from '../config/config';
 
-/** Adapter: sends through Resend or SMTP, depending on MAIL_PROVIDER. */
+/** Sends all system email through Resend. */
 @Injectable()
 export class MailService {
-  private transport = nodemailer.createTransport({
-    host: config.mail.host, port: config.mail.port, secure: config.mail.secure,
-    auth: config.mail.user ? { user: config.mail.user, pass: config.mail.pass } : undefined,
-  });
-
   async send(to: string, subject: string, html: string, text: string) {
-    if (config.mail.provider === 'smtp') {
-      return this.transport.sendMail({ from: config.mail.from, to, subject, html, text });
-    }
-
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {

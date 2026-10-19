@@ -92,7 +92,6 @@ export class AuthService {
     const link = `${config.appUrl}/accept-invite?token=${token}`;
     const u = await this.db.one('SELECT id, email, full_name FROM users WHERE id = $1', [userId]);
     await this.notify.send({ userId, email: u.email, kind: kind === 'invite' ? 'account.invite' : 'account.reset', subject: kind === 'invite' ? 'Your AfS Procurement account' : 'Reset your AfS Procurement password', vars: { signer_name: u.full_name, link, document_title: 'your account' }, inApp: false });
-    return link;
   }
 
   async acceptInvite(token: string, password: string, ip: string | null) {

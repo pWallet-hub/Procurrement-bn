@@ -1,4 +1,4 @@
-# Backend stack: API + worker + PostgreSQL + Redis + SeaweedFS (S3 files) + Mailpit.
+# Backend stack: API + worker + PostgreSQL + Redis + SeaweedFS (S3 files); email is sent through Resend.
 #
 # Self-contained: every setting comes from environment variables with a safe local default, so it works
 #   - locally:  docker compose up -d --build      (reads .env; docker-compose.override.yml publishes dev ports)
@@ -22,14 +22,8 @@ x-app-env: &app-env
   S3_BUCKET: ${S3_BUCKET:-afs-files}
   S3_ACCESS_KEY: ${S3_ACCESS_KEY:-afsstorage}
   S3_SECRET_KEY: ${S3_SECRET_KEY:-afsstorage_dev_secret}
-  MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
   MAIL_FROM: ${MAIL_FROM:-}
   RESEND_API_KEY: ${RESEND_API_KEY:-}
-  SMTP_HOST: ${SMTP_HOST:-mailpit}
-  SMTP_PORT: ${SMTP_PORT:-1025}
-  SMTP_USER: ${SMTP_USER:-}
-  SMTP_PASS: ${SMTP_PASS:-}
-  SMTP_SECURE: ${SMTP_SECURE:-false}
   SEED_ON_START: ${SEED_ON_START:-true}
   SEED_PASSWORD: ${SEED_PASSWORD:-Passw0rd!dev}
   ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@afs.local}
@@ -80,12 +74,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
-
-  # Catches all outgoing e-mail so you can read invites and signing links (UI on port 8025).
-  # For real e-mail set MAIL_PROVIDER=resend and RESEND_API_KEY, or configure SMTP; this container can then be left unused.
-  mailpit:
-    image: axllent/mailpit:latest
-    expose: ["8025"]
 
   api:
     build: .

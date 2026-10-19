@@ -1,10 +1,5 @@
 const env = process.env;
 const num = (v: string | undefined, d: number) => (v ? Number(v) : d);
-const mailProvider = env.MAIL_PROVIDER ?? 'smtp';
-
-if (mailProvider !== 'smtp' && mailProvider !== 'resend') {
-  throw new Error('MAIL_PROVIDER must be either "smtp" or "resend"');
-}
 
 export const config = {
   nodeEnv: env.NODE_ENV ?? 'development',
@@ -29,14 +24,8 @@ export const config = {
     secretKey: env.S3_SECRET_KEY ?? 'afsstorage_dev_secret',
   },
   mail: {
-    provider: mailProvider,
-    from: env.MAIL_FROM || 'AfS Procurement <procurement@afs.local>',
-    resendApiKey: env.RESEND_API_KEY || undefined,
-    host: env.SMTP_HOST ?? 'localhost',
-    port: num(env.SMTP_PORT, 1025),
-    user: env.SMTP_USER || undefined,
-    pass: env.SMTP_PASS || undefined,
-    secure: env.SMTP_SECURE === 'true',
+    from: env.MAIL_FROM?.trim() ?? '',
+    resendApiKey: env.RESEND_API_KEY?.trim() || undefined,
   },
   /** Initial administrator, created on first start if missing. Required in production. */
   admin: {
@@ -53,12 +42,12 @@ export const config = {
   reminderDays: 2,
 };
 
-if (config.mail.provider === 'resend') {
-  const missing = [
-    config.mail.resendApiKey ? null : 'RESEND_API_KEY',
-    env.MAIL_FROM?.trim() ? null : 'MAIL_FROM',
-  ].filter(Boolean);
-  if (missing.length) throw new Error(`Resend email requires: ${missing.join(', ')}`);
+const missingMailConfig = [
+  config.mail.resendApiKey ? null : 'RESEND_API_KEY',
+  config.mail.from.trim() ? null : 'MAIL_FROM',
+].filter(Boolean);
+if (config.nodeEnv !== 'test' && missingMailConfig.length) {
+  throw new Error(`Resend email requires: ${missingMailConfig.join(', ')}`);
 }
 
 /** In production the placeholder secrets from the dev defaults must never be used. */

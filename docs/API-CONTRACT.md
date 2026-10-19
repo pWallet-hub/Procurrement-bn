@@ -16,7 +16,7 @@ Send an `Idempotency-Key` header (any uuid) on `submit` and `sign`.
 | `POST /auth/totp` | `{challenge_token, code}` | `{access_token, refresh_token, user}` |
 | `POST /auth/refresh` | `{refresh_token}` | `{access_token, refresh_token}` |
 | `POST /auth/logout` | `{refresh_token}` | `{ok:true}` |
-| `POST /auth/accept-invite` | `{token, password}` | `{access_token, refresh_token, user}` (invite link in e-mail: `/accept-invite?token=...`) |
+| `POST /auth/accept-invite` | `{token, password}` | `{access_token, refresh_token, user}` (single-use invite link is emailed through Resend: `/accept-invite?token=...`) |
 | `POST /auth/totp/setup` (auth) | - | `{secret, otpauth_url}` |
 | `POST /auth/totp/enable` (auth) | `{code}` | `{ok:true}` |
 | `GET /me` | - | `User` |
@@ -130,7 +130,8 @@ Use `document.can.*` to show/hide buttons - never re-derive permissions in the c
 ## Admin (role `admin`)
 `GET|POST /admin/users`, `PATCH /admin/users/{id}` (full_name, position, department_id, roles, active), `POST /admin/users/{id}/reset-password`, `POST /admin/users/{id}/reset-totp`;
 `GET|POST|PATCH /admin/departments`, `/admin/budget-lines` (permission `budget.manage`, held by admin), `/admin/suppliers`; `GET /admin/templates`.
-`POST /admin/users` body `{email, full_name, position, department_id, roles[]}` -> `{user, invite_link}` (`invite_link` only returned outside production).
+`POST /admin/users` body `{email, full_name, position, department_id, roles[]}` -> `{user}`; the single-use invitation is sent by email and its token is never returned by the API.
+`POST /admin/users/{id}/resend-invite` -> `{ok:true}` for an active user who has not set a password; replaces the outstanding invite token and queues a fresh invitation email through Resend.
 
 ## Dev seed accounts (password `Passw0rd!dev`, no TOTP in dev)
 `admin@afs.local`, `staff@afs.local` (requesting_staff), `accountant@afs.local`, `director.comms@afs.local`, `director.dept@afs.local`, `pi@afs.local`, `cfm@afs.local`, `verifier@afs.local`, `superior@afs.local`.

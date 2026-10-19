@@ -34,8 +34,11 @@ export class NotificationsService {
   private pending: string[] = [];
   /** enqueue e-mails recorded inside a transaction once it has committed */
   async flush() {
-    const ids = this.pending.splice(0);
-    for (const id of ids) await this.queue.add('email', { notificationId: id }, { jobId: `email-${id}` });
+    while (this.pending.length) {
+      const id = this.pending[0];
+      await this.queue.add('email', { notificationId: id }, { jobId: `email-${id}` });
+      this.pending.shift();
+    }
   }
 
   list(userId: string) {

@@ -34,6 +34,14 @@ async function main() {
         throw e; // BullMQ retries with backoff, then keeps it in the failed set (dead letter)
       }
     },
+    async 'email.requeue'() {
+      const pending = await db.query(
+        "SELECT id FROM notifications WHERE channel = 'email' AND status = 'queued' ORDER BY created_at LIMIT 100",
+      );
+      for (const notification of pending.rows) {
+        await queue.add('email', { notificationId: notification.id }, { jobId: `email-${notification.id}` });
+      }
+    },
     'pdf.render': (job) => pdf.renderAndStore(job.data.documentId),
     'pdf.case_file': (job) => pdf.buildCaseFile(job.data.caseId),
 
@@ -86,6 +94,7 @@ async function main() {
 
   // schedules (idempotent upserts)
   const q = queue.queue;
+  await q.upsertJobScheduler('email-requeue', { pattern: '* * * * *' }, { name: 'email.requeue' });
   await q.upsertJobScheduler('daily-reminder', { pattern: '0 7 * * *' }, { name: 'reminder' });
   await q.upsertJobScheduler('daily-expiry', { pattern: '15 7 * * *' }, { name: 'expiry' });
   await q.upsertJobScheduler('daily-token-cleanup', { pattern: '30 2 * * *' }, { name: 'token.cleanup' });

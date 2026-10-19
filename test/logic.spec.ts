@@ -6,8 +6,31 @@ import { canonical, documentHash } from '../src/common/hash';
 import { eventHash } from '../src/audit/audit.service';
 import { ALL_TEMPLATES } from '../src/templates/definitions';
 import { GUARDS } from '../src/workflow/guards';
+import { EMAIL_TEMPLATES, renderEmail } from '../src/notifications/mail.service';
 
 const tpl = (code: string) => ALL_TEMPLATES.find((t) => t.code === code)!;
+
+describe('notification emails', () => {
+  it('has a template for every invitation and workflow notification', () => {
+    const kinds = [
+      'account.invite', 'account.reset', 'sign_requested', 'external_sign', 'returned',
+      'completed', 'followup', 'reminder', 'expiry',
+    ];
+    for (const kind of kinds) expect(EMAIL_TEMPLATES[kind]).toBeDefined();
+  });
+
+  it('renders invitation and supplier signing links into the email', () => {
+    for (const kind of ['account.invite', 'external_sign']) {
+      const email = renderEmail(kind, 'Action required', {
+        signer_name: 'Test User',
+        document_title: 'Test document',
+        link: 'https://example.org/action?token=test',
+      });
+      expect(email.html).toContain('https://example.org/action?token=test');
+      expect(email.text).toContain('https://example.org/action?token=test');
+    }
+  });
+});
 
 describe('templates', () => {
   it('every guard named in a template exists', () => {

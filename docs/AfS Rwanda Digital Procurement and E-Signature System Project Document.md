@@ -13,7 +13,7 @@ The system is a web application that models each AfS-Rwanda paper form as a vers
 - **Append only audit.** Every state change and signature produces an audit event that cannot be edited.
 - **Stateless services.** All state lives in the database and object store, so the API scales horizontally.
 
-**Hosting and identity.** The system is self hosted on the organization's own VPS. Email is sent through the organization's Google Workspace. User accounts are created by an administrator; there is no self registration. The forms and their workflow are reproduced as they are on the printed templates.
+**Hosting and identity.** The system is self hosted on the organization's own VPS. Email is sent through Resend using the organization's verified sender domain. User accounts are created by an administrator; there is no self registration. The forms and their workflow are reproduced as they are on the printed templates.
 
 ## 2. System architecture
 
@@ -37,7 +37,7 @@ These are recommended defaults. Each row can be swapped without changing the res
 | Background jobs | Queue (Redis in a container with BullMQ, or Celery) | Email sending, reminders, PDF generation off the request path |
 | PDF | HTML to PDF renderer or a PDF library, plus a stamping step | Generate form PDFs from templates and merge signatures and audit page |
 | Accounts and sign in | Accounts created by the admin, email and password with Argon2id hashing, TOTP second factor, short lived JWT access token with refresh token | Matches how the organization adds users; no self registration |
-| Email | Google Workspace through an adapter (SMTP relay or Gmail API, see section 12) | The organization already uses Workspace mail |
+| Email | Resend API with an environment-configured API key and verified sender | One provider for all notifications and invitations |
 | Reverse proxy and TLS | Caddy or Nginx with automatic certificates | One public entry point |
 | Packaging | Docker images run with Docker Compose on the VPS | Same artifact for test and live, simple to operate |
 | Delivery | Pipeline with lint, tests, image build, migration step, deploy to the VPS | Repeatable releases |
@@ -81,7 +81,7 @@ Permissions are stored as `role -> permission codes` rows and checked in one aut
 
 Users are managed only by an administrator (`POST /admin/users`).
 
-1. The admin enters full name, Google Workspace email address, position, department and roles.
+1. The admin enters full name, email address, position, department and roles.
 2. The system emails an invitation with a one time link that expires; the user sets a password and enrolls a TOTP authenticator.
 3. Later sign in uses email, password and the TOTP code; sessions expire after inactivity.
 4. The admin can change roles and departments, reset a password or second factor, and deactivate an account. A deactivated user cannot sign in, but their past signatures and audit records stay.
@@ -534,9 +534,9 @@ Slow or external work runs in a queue so API calls stay fast. Jobs are idempoten
 | `job.token.cleanup` | Scheduled | Delete expired signing tokens |
 | `job.backup.verify` | Scheduled | Check that the latest backup restores |
 
-**Email templates.** Stored as versioned templates with variables (`{{signer_name}}`, `{{document_title}}`, `{{requester}}`, `{{link}}`). Each message contains one action button and a plain text fallback. Sending goes through an adapter interface (`send(to, subject, html, text)`) so the Google Workspace sender is one implementation that can be replaced by configuration.
+**Email templates.** Stored as versioned templates with variables (`{{signer_name}}`, `{{document_title}}`, `{{requester}}`, `{{link}}`). Each message contains one action button and a plain text fallback. All sending goes through Resend using its API.
 
-**Google Workspace email.** All notifications and invitations are sent from one dedicated sender address on the organization's domain. Two supported methods, chosen by configuration: (1) the Google Workspace SMTP relay, where the Workspace admin allows the VPS public IP address, or (2) the Gmail API with a service account that has domain wide delegation limited to sending. Either way, SPF, DKIM and DMARC must be set for the domain so that messages are not marked as spam.
+**Resend email.** All notifications and invitations are sent through Resend from one verified sender address on the organization's domain. Store the Resend API key only in environment configuration. Publish the DNS records Resend requires for the sender domain so messages authenticate correctly and are less likely to be marked as spam.
 
 **Delivery tracking.** The `notifications` table records `status` (queued, sent, failed) and `sent_at`. A bounce or failure is shown on the case page so the requester can contact the signer another way.
 
@@ -597,7 +597,7 @@ The build order delivers the signing engine and the first forms early, then adds
 **Technical deliverables per phase**
 
 1. **Discover and design.** Finalize template JSON for the nine forms (section 5); OpenAPI file for section 11; schema migrations for section 6; clickable wireframes; decide the signature level.
-2. **Core build.** Admin managed accounts with TOTP, RBAC, users and departments; template engine and form renderer; case and document services; workflow engine with the state machines; PR-01, QC-02, QE-03, PO-09; signature service, audit chain and Google Workspace email notifications; CI pipeline and the test environment.
+2. **Core build.** Admin managed accounts with TOTP, RBAC, users and departments; template engine and form renderer; case and document services; workflow engine with the state machines; PR-01, QC-02, QE-03, PO-09; signature service, audit chain and Resend email notifications; CI pipeline and the test environment.
 3. **Full chain.** MPV-03, PA-04, GR-06, IM-08; contract template and external signing token flow; PDF stamping, audit page and case file merge; reports endpoints; reminder and expiry jobs.
 4. **Pilot.** VPS setup and hardening, production environment, backups and restore test, monitoring and alerts, load and security tests, data seeding (users, budget lines, suppliers), pilot with one team and defect fixing.
 5. **Later (not committed).** Payment and accounting integration, WhatsApp or SMS channel, public API keys, certificate based signing, supplier performance reports.

@@ -3,9 +3,10 @@
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 const API = process.env.API ?? 'http://localhost:3000/api/v1';
-const REMOTE = process.env.E2E_REMOTE === '1'; // against a deployed server: skip steps that need local Mailpit/Docker
+const REMOTE = process.env.E2E_REMOTE === '1'; // against a deployed server: skip steps that need local Docker
 const PASSWORD = process.env.SEED_PASSWORD ?? 'Passw0rd!dev';
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const sql = (q) => execSync(`docker compose exec -T postgres psql -U afs -d afs -tA -c "${q}"`, { cwd: process.env.COMPOSE_DIR ?? new URL('..', import.meta.url).pathname }).toString();
 
 let passed = 0;
 const failures = [];
@@ -131,13 +132,8 @@ ok(ct0.data.contract_value.amount === 95000 && ct0.data.scope.length === 1, 'con
 ct = must(await call('POST', `/documents/${ct0.id}/submit`, T.accountant), 201, 'submit CONTRACT');
 must(await sign(ct.id, 'supplier_signatory', T.pi, ct), 403, 'internal user cannot sign the supplier slot');
 must(await sign(ct.id, 'afs_signatory', T.pi, ct), 201, 'PI signs for AfS-Rwanda');
-await new Promise((r) => setTimeout(r, 4000));
-const mp_list = await fetch(`http://localhost:${process.env.MAILPIT_PORT ?? 8125}/api/v1/search?query=${encodeURIComponent('to:' + sup[0].email)}`).then((r) => r.json());
-const mailId = mp_list.messages.find((m) => /sign/i.test(m.Subject))?.ID;
-ok(!!mailId, 'supplier received the signing e-mail');
-const mailBody = await fetch(`http://localhost:${process.env.MAILPIT_PORT ?? 8125}/api/v1/message/${mailId}`).then((r) => r.json());
-const link = /(https?:\/\/\S+\/sign\/[0-9a-f]{64})/.exec(mailBody.Text)?.[1];
-ok(!!link, 'e-mail contains a single use link');
+const link = sql(`SELECT payload->'vars'->>'link' FROM notifications WHERE email='${sup[0].email}' AND kind='external_sign' ORDER BY created_at DESC LIMIT 1`).trim();
+ok(!!link, 'supplier signing notification contains a single use link');
 const stoken = link.split('/sign/')[1];
 const view = must(await call('GET', `/sign/${stoken}`, null), 200, 'external view without login');
 ok(view.document.doc_type === 'CONTRACT' && view.template.code === 'CONTRACT', 'external view returns the document and template');
@@ -187,14 +183,10 @@ ok(au.items.length > 20, 'audit search works for the accountant');
 const caseFile = await call('GET', `/cases/${caseId}/purchase-file`, T.accountant, null, true);
 ok(caseFile.status === 200, 'purchase file (merged PDF) available for the closed case');
 must(await call('GET', '/reports/spend', T.accountant), 200, 'spend report');
-const mails = REMOTE ? null : await fetch(`http://localhost:${process.env.MAILPIT_PORT ?? 8125}/api/v1/messages`).then((r) => r.json()).catch(() => null);
-if (mails) ok(mails.total > 5, `mailpit captured ${mails.total} e-mails`);
-
 if (!REMOTE) {
 console.log('\n== tamper evidence');
 const ctFinal = await getDoc(ct.id, T.staff);
 ok(ctFinal.state === 'archived', 'contract archived after both signatures');
-const sql = (q) => execSync(`docker compose exec -T postgres psql -U afs -d afs -tA -c "${q}"`, { cwd: process.env.COMPOSE_DIR ?? new URL('..', import.meta.url).pathname }).toString();
 let blocked = false;
 try { sql("UPDATE audit_events SET action = 'x' WHERE id = 1"); } catch { blocked = true; }
 ok(blocked, 'database refuses to UPDATE audit_events');
@@ -259,8 +251,15 @@ ok(tplPo.schema.sections.flatMap((x) => x.fields).find((f) => f.key === 'issue_d
 
 console.log('\n== admin: invite a user');
 const inv = must(await call('POST', '/admin/users', T.admin, { email: `new.person.${Date.now()}@afs.local`, full_name: 'New Person', position: 'Officer', roles: ['requesting_staff'] }), 201, 'admin creates user');
-ok(!!inv.invite_link, 'invite link returned in dev');
-const tok = new URL(inv.invite_link).searchParams.get('token');
+ok(!inv.invite_link, 'invite token is not exposed in API response');
+const inviteLink = sql(`SELECT payload->'vars'->>'link' FROM notifications WHERE user_id='${inv.user.id}' AND kind='account.invite' ORDER BY created_at DESC LIMIT 1`).trim();
+const oldInviteToken = new URL(inviteLink).searchParams.get('token');
+ok(!!oldInviteToken, 'invite notification contains the account setup link');
+must(await call('POST', `/admin/users/${inv.user.id}/resend-invite`, T.admin, {}), 201, 'admin can resend a pending invite');
+const resentLink = sql(`SELECT payload->'vars'->>'link' FROM notifications WHERE user_id='${inv.user.id}' AND kind='account.invite' ORDER BY created_at DESC LIMIT 1`).trim();
+const tok = new URL(resentLink).searchParams.get('token');
+ok(!!tok && tok !== oldInviteToken, 'resending creates a fresh invite link');
+must(await call('POST', '/auth/accept-invite', null, { token: oldInviteToken, password: 'A-long-password-1' }), 400, 'previous invite link is invalidated');
 must(await call('POST', '/auth/accept-invite', null, { token: tok, password: 'A-long-password-1' }), 201, 'invitee sets a password');
 must(await call('POST', '/auth/accept-invite', null, { token: tok, password: 'A-long-password-1' }), 400, 'invite link is single use');
 

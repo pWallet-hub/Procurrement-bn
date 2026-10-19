@@ -21,11 +21,7 @@ export class QueueService implements OnModuleDestroy {
   }
 
   async add(name: string, data: Record<string, any>, opts: { jobId?: string; delay?: number } = {}) {
-    try {
-      await this.queue.add(name, data, opts);
-    } catch (e: any) {
-      this.log.error(`could not enqueue ${name}: ${e.message}`);
-    }
+    await this.queue.add(name, data, opts);
   }
 
   async onModuleDestroy() {

@@ -30,7 +30,7 @@ Browser ──► Frontend (nginx serves the React app)
               ▼
             API (NestJS, Procurrement-bn/src)  ◄── Worker (same image, node dist/worker.js: e-mail, PDFs, reminders, cleanup, audit checkpoint)
               │                                        │
-   PostgreSQL 16 ── Redis (BullMQ queue) ── SeaweedFS (S3 files: attachments, signatures, PDFs) ── Resend or SMTP (Mailpit in dev)
+   PostgreSQL 16 ── Redis (BullMQ queue) ── SeaweedFS (S3 files: attachments, signatures, PDFs) ── Resend (all outgoing email)
 ```
 
 Backend source map (`Procurrement-bn/src`):
@@ -59,12 +59,12 @@ Frontend map (`Procurrement-fn/src`): `api/` (typed client), `auth/`, `ui/` (pri
 Backend (own folder, Docker only):
 ```bash
 cd Procurrement-bn
-cp .env.example .env          # first time; set RESEND_API_KEY and change host ports if they clash
-docker compose up -d --build  # api, worker, postgres, redis, storage (SeaweedFS), mailpit
+cp .env.example .env          # first time; set RESEND_API_KEY, public APP_URL for invite links, and free host ports
+docker compose up -d --build  # api, worker, postgres, redis, storage (SeaweedFS)
 curl localhost:${API_PORT:-3000}/api/v1/health
 ```
 `docker-compose.override.yml` (local only) publishes ports; `docker-compose.yml` publishes none (Coolify-ready).
-On the previous PC another project occupied 3000/5432/9000/8025/8080, so the local `.env` used API 3100, Postgres 5442, S3 8433, Mailpit 8125. The `.env` is git-ignored; recreate it from `.env.example` and pick free ports.
+On the previous PC another project occupied 3000/5432/9000/8080, so the local `.env` used API 3100, Postgres 5442 and S3 8433. The `.env` is git-ignored; recreate it from `.env.example` and pick free ports.
 
 Frontend (own folder; talks to any API URL):
 ```bash
@@ -76,18 +76,16 @@ API_UPSTREAM=http://host.docker.internal:<api port> WEB_PORT=8180 docker compose
 
 Demo accounts (dev/demo only, created outside production), all with password `Passw0rd!dev`:
 `admin@`, `staff@` (requesting staff), `accountant@`, `director.comms@`, `director.dept@`, `pi@`, `cfm@`, `verifier@`, `superior@` + `afs.local`.
-Mailpit shows e-mails only when `MAIL_PROVIDER=smtp`; the default `.env.example` uses Resend.
+Invitations, password resets, internal/external signing, returns, completions, follow-ups, reminders and expiry alerts all use the Resend-only queued email worker, which periodically recovers notifications left queued during a Redis outage. Invite tokens are not returned in API responses.
 
 ## 6. Tests (run these before and after any change)
-
-For the full end-to-end test, set `MAIL_PROVIDER=smtp` in `.env` and restart the stack so test emails are captured by Mailpit.
 
 ```bash
 cd Procurrement-bn
 npm test                                                     # 11 unit tests
-API=http://localhost:3100/api/v1 MAILPIT_PORT=8125 COMPOSE_DIR=$PWD node scripts/e2e.mjs   # 181 checks; full case PR-01 -> closed + contract + IM-08 + saved signature + tamper + audit concurrency + budget lines + TC-10
+API=http://localhost:3100/api/v1 COMPOSE_DIR=$PWD node scripts/e2e.mjs   # full case PR-01 -> closed + contract + IM-08 + saved signature + tamper + audit concurrency + budget lines + TC-10
 ```
-e2e flags: `E2E_REMOTE=1` (against a deployed server: skips steps needing local Mailpit/Docker), `E2E_SOFT=1` (continue after failures and summarise), `COMPOSE_DIR` (folder whose compose project holds Postgres, used for the tamper test). **It creates test data**: only run against demo/test databases.
+e2e flags: `E2E_REMOTE=1` (against a deployed server: skips steps needing local Docker), `E2E_SOFT=1` (continue after failures and summarise), `COMPOSE_DIR` (folder whose compose project holds Postgres, used for the tamper test). **It creates test data**: only run against demo/test databases.
 
 Browser test: `BASE=<frontend url> [API_DIRECT=<api url>] node Procurrement-fn/scripts/ui-journey.mjs` (needs `npm i playwright` somewhere and `npx playwright install chromium`; see the file header).
 
@@ -99,7 +97,7 @@ Testing pitfalls already hit:
 
 ## 7. Deployment (Coolify) and current live state
 
-Docs: `Procurrement-bn/DEPLOY.md`, `Procurrement-fn/DEPLOY.md`. Production variables for the backend: `NODE_ENV=production`, `APP_URL`, `CORS_ORIGINS`, `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `TOTP_REQUIRED`, `MAIL_PROVIDER=resend`, `RESEND_API_KEY`, and a verified `MAIL_FROM` (+ optional SMTP_* if using SMTP).
+Docs: `Procurrement-bn/DEPLOY.md`, `Procurrement-fn/DEPLOY.md`. Production variables for the backend: `NODE_ENV=production`, `APP_URL`, `CORS_ORIGINS`, `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `TOTP_REQUIRED`, `RESEND_API_KEY`, and a verified `MAIL_FROM`.
 
 Live URLs: backend `https://apipro.afs-rwanda.org` (API base `https://apipro.afs-rwanda.org/api/v1`), frontend `https://procurement.afs-rwanda.org`. Coolify itself is operated by the owner; agents have no access to it.
 
@@ -141,7 +139,7 @@ State when last tested (2026-10-05):
 ## 9. Backlog (suggested order)
 
 1. **Production go-live**: variables, DB wipe, redeploy both, rerun e2e + UI journey against live, change the admin password, `TOTP_REQUIRED=true` for approver roles.
-2. **E-mail**: configure Resend with an API key and verified sender domain/address (`MAIL_PROVIDER=resend`, `RESEND_API_KEY`, `MAIL_FROM`); configure the domain's DNS records as required by Resend. SMTP remains an alternative via `MAIL_PROVIDER=smtp`.
+2. **E-mail**: configure Resend with an API key and verified sender domain/address (`RESEND_API_KEY`, `MAIL_FROM`); configure the domain's DNS records as required by Resend. All system email uses Resend.
 3. **Backups**: nightly `pg_dump` + WAL archiving off the server; copy of the storage volume; restore test (spec section 13/14).
 4. **Review on screen** the forms not yet viewed: QC-02, QE-03, PA-04, MPV-03, contract; run print preview; dark mode; check the PDFs of QC-02/QE-03/PA-04/IM-08 visually (PR-01, PO-09, GR-06, MPV-03, contract were reviewed).
 5. **Test live**: the supplier signing link end to end with real mail.

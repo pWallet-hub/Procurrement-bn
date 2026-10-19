@@ -5,7 +5,6 @@ import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { badRequest, notFound, validationError } from '../common/errors';
 import { ROLES } from '../auth/permissions';
-import { config } from '../config/config';
 import { TemplatesService } from '../templates/templates.service';
 import { BUDGET_ROW, budgetLineErrors, createBudgetLine } from './budget-lines';
 
@@ -33,9 +32,9 @@ export class AdminController {
       await this.audit.log({ actorId: admin.id, action: 'admin.user_created', objectType: 'user', objectId: u.id, detail: { email: b.email, roles } }, c);
       return u.id as string;
     });
-    const link = await this.auth.createInvite(id);
+    await this.auth.createInvite(id);
     const user = await this.db.one(`SELECT ${USER_ROW} FROM users u WHERE u.id = $1`, [id]);
-    return { user, ...(config.isProd ? {} : { invite_link: link }) };
+    return { user };
   }
 
   @Patch('users/:id')
@@ -56,9 +55,19 @@ export class AdminController {
   @Post('users/:id/reset-password')
   async resetPassword(@CurrentUser() admin: AuthUser, @Param('id') id: string) {
     if (!(await this.db.one('SELECT 1 AS x FROM users WHERE id = $1', [id]))) throw notFound('user');
-    const link = await this.auth.createInvite(id, 'reset');
+    await this.auth.createInvite(id, 'reset');
     await this.audit.log({ actorId: admin.id, action: 'admin.password_reset', objectType: 'user', objectId: id });
-    return { ok: true, ...(config.isProd ? {} : { invite_link: link }) };
+    return { ok: true };
+  }
+
+  @Post('users/:id/resend-invite')
+  async resendInvite(@CurrentUser() admin: AuthUser, @Param('id') id: string) {
+    const user = await this.db.one<{ password_hash: string | null }>('SELECT password_hash FROM users WHERE id = $1 AND active', [id]);
+    if (!user) throw notFound('active user');
+    if (user.password_hash) throw badRequest('invite_already_accepted', 'This user already has a password; use password reset instead');
+    await this.auth.createInvite(id, 'invite');
+    await this.audit.log({ actorId: admin.id, action: 'admin.invite_resent', objectType: 'user', objectId: id });
+    return { ok: true };
   }
 
   @Post('users/:id/reset-totp')
