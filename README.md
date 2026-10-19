@@ -1,12 +1,12 @@
 # Procurrement-bn
 
 Backend for the **AfS Rwanda Digital Procurement and E-Signature System** (spec: `AfS Rwanda Digital Procurement and E-Signature System Project Document.md`).
-NestJS + TypeScript, PostgreSQL, Redis (BullMQ), SeaweedFS (S3 files, replaces the unmaintained MinIO), Mailpit (dev mail). Everything runs in Docker.
+NestJS + TypeScript, PostgreSQL, Redis (BullMQ), SeaweedFS (S3 files, replaces the unmaintained MinIO), Resend (email) with Mailpit available for local SMTP testing. Everything runs in Docker.
 
 ## Run
 
 ```bash
-cp .env.example .env          # first time; change the host ports at the bottom if they clash
+cp .env.example .env          # set RESEND_API_KEY and change host ports if they clash
 docker compose up -d --build  # api + worker + postgres + redis + storage (SeaweedFS) + mailpit
 curl localhost:${API_PORT:-3000}/api/v1/health
 ```
@@ -16,13 +16,15 @@ Migrations and the seed (roles, permissions, the nine form templates, demo users
 | Service | Default URL |
 | --- | --- |
 | API | http://localhost:3000/api/v1 |
-| Mailpit (all e-mails, invite and signing links) | http://localhost:8025 |
+| Mailpit (when `MAIL_PROVIDER=smtp`) | http://localhost:8025 |
 | S3 API (SeaweedFS, keys `afsstorage` / `afsstorage_dev_secret`) | http://localhost:8333 |
 | PostgreSQL (`afs` / `afs_dev_password`, db `afs`) | localhost:5432 |
 
 Demo accounts (password `Passw0rd!dev`, no TOTP in dev): `admin@`, `staff@` (requesting staff), `accountant@`, `director.comms@`, `director.dept@`, `pi@`, `cfm@`, `verifier@`, `superior@` + `afs.local`.
 
 ## Test
+
+For the full end-to-end test, set `MAIL_PROVIDER=smtp` in `.env` and restart the stack so test emails are captured by Mailpit.
 
 ```bash
 npm test                                   # unit tests: template validation, computed fields, hashing, audit chain
@@ -58,4 +60,4 @@ Also in `docs/`: [API-CONTRACT.md](docs/API-CONTRACT.md) (the API the frontend u
 
 ## Production notes (not done yet)
 
-TLS reverse proxy (Caddy) and firewall, real secrets, `TOTP_REQUIRED=true`, `NODE_ENV=production` (no demo seed, no invite links in responses), Google Workspace SMTP relay settings, nightly `pg_dump` + WAL archiving off the VPS, malware scan on upload (hook marked TODO), OpenAPI file, CI pipeline.
+TLS reverse proxy (Caddy) and firewall, real secrets, `TOTP_REQUIRED=true`, `NODE_ENV=production` (no demo seed, no invite links in responses), Resend email setup (`MAIL_PROVIDER=resend`, `RESEND_API_KEY`, and the verified `MAIL_FROM` sender), nightly `pg_dump` + WAL archiving off the VPS, malware scan on upload (hook marked TODO), OpenAPI file, CI pipeline. SMTP remains available by setting `MAIL_PROVIDER=smtp`.

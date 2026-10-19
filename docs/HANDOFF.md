@@ -30,7 +30,7 @@ Browser ──► Frontend (nginx serves the React app)
               ▼
             API (NestJS, Procurrement-bn/src)  ◄── Worker (same image, node dist/worker.js: e-mail, PDFs, reminders, cleanup, audit checkpoint)
               │                                        │
-   PostgreSQL 16 ── Redis (BullMQ queue) ── SeaweedFS (S3 files: attachments, signatures, PDFs) ── SMTP (Mailpit in dev)
+   PostgreSQL 16 ── Redis (BullMQ queue) ── SeaweedFS (S3 files: attachments, signatures, PDFs) ── Resend or SMTP (Mailpit in dev)
 ```
 
 Backend source map (`Procurrement-bn/src`):
@@ -59,7 +59,7 @@ Frontend map (`Procurrement-fn/src`): `api/` (typed client), `auth/`, `ui/` (pri
 Backend (own folder, Docker only):
 ```bash
 cd Procurrement-bn
-cp .env.example .env          # first time. Change the host-port block at the bottom if ports clash
+cp .env.example .env          # first time; set RESEND_API_KEY and change host ports if they clash
 docker compose up -d --build  # api, worker, postgres, redis, storage (SeaweedFS), mailpit
 curl localhost:${API_PORT:-3000}/api/v1/health
 ```
@@ -76,9 +76,11 @@ API_UPSTREAM=http://host.docker.internal:<api port> WEB_PORT=8180 docker compose
 
 Demo accounts (dev/demo only, created outside production), all with password `Passw0rd!dev`:
 `admin@`, `staff@` (requesting staff), `accountant@`, `director.comms@`, `director.dept@`, `pi@`, `cfm@`, `verifier@`, `superior@` + `afs.local`.
-Mailpit (dev inbox) shows every e-mail, invite and supplier signing link.
+Mailpit shows e-mails only when `MAIL_PROVIDER=smtp`; the default `.env.example` uses Resend.
 
 ## 6. Tests (run these before and after any change)
+
+For the full end-to-end test, set `MAIL_PROVIDER=smtp` in `.env` and restart the stack so test emails are captured by Mailpit.
 
 ```bash
 cd Procurrement-bn
@@ -97,7 +99,7 @@ Testing pitfalls already hit:
 
 ## 7. Deployment (Coolify) and current live state
 
-Docs: `Procurrement-bn/DEPLOY.md`, `Procurrement-fn/DEPLOY.md`. Production variables for the backend: `NODE_ENV=production`, `APP_URL`, `CORS_ORIGINS`, `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` (+ optional SMTP_*, MAIL_FROM, TOTP_REQUIRED).
+Docs: `Procurrement-bn/DEPLOY.md`, `Procurrement-fn/DEPLOY.md`. Production variables for the backend: `NODE_ENV=production`, `APP_URL`, `CORS_ORIGINS`, `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `TOTP_REQUIRED`, `MAIL_PROVIDER=resend`, `RESEND_API_KEY`, and a verified `MAIL_FROM` (+ optional SMTP_* if using SMTP).
 
 Live URLs: backend `https://apipro.afs-rwanda.org` (API base `https://apipro.afs-rwanda.org/api/v1`), frontend `https://procurement.afs-rwanda.org`. Coolify itself is operated by the owner; agents have no access to it.
 
@@ -105,7 +107,7 @@ State when last tested (2026-10-05):
 - The **backend was still on the demo setup**: demo logins (`admin@afs.local` etc. / `Passw0rd!dev`) worked on the public API, `NODE_ENV` was not production, invite links were returned in API responses, and the audit chain was forked at event 66 (old code). **Redeploy with the production variables, then wipe the Postgres volume** (clears demo users and the forked chain, which cannot be repaired). Re-verify with `E2E_REMOTE=1 ... e2e.mjs` and `GET /verify/<id>` (must say `ok:true`).
 - The frontend works end to end **when the browser calls the API directly** (build arg `VITE_API_BASE=https://apipro.afs-rwanda.org/api/v1`, backend `CORS_ORIGINS=https://procurement.afs-rwanda.org`). That is the configuration the owner switched to.
 - The nginx `/api` proxy inside the frontend container returned 502 on the server although the API is healthy. Cause not confirmed (suspected: container cannot reach its own server's public address, or the runtime variable). Diagnostics exist in the latest code: `/healthz/api` and `/healthz-upstream.txt` (DNS, port, HTTP result written at container start). Not needed while the direct-API setup is used.
-- Not yet tested live: external supplier signing e-mail flow, real SMTP delivery, QE-03/PO-09/PA-04/MPV-03/contract screens.
+- Not yet tested live: external supplier signing e-mail flow, real email delivery, QE-03/PO-09/PA-04/MPV-03/contract screens.
 
 ## 8. Lessons and gotchas
 
@@ -139,7 +141,7 @@ State when last tested (2026-10-05):
 ## 9. Backlog (suggested order)
 
 1. **Production go-live**: variables, DB wipe, redeploy both, rerun e2e + UI journey against live, change the admin password, `TOTP_REQUIRED=true` for approver roles.
-2. **E-mail**: Google Workspace SMTP relay (smtp-relay.gmail.com:587, allow server IP) + SPF/DKIM/DMARC; remove Mailpit from the live stack or protect it.
+2. **E-mail**: configure Resend with an API key and verified sender domain/address (`MAIL_PROVIDER=resend`, `RESEND_API_KEY`, `MAIL_FROM`); configure the domain's DNS records as required by Resend. SMTP remains an alternative via `MAIL_PROVIDER=smtp`.
 3. **Backups**: nightly `pg_dump` + WAL archiving off the server; copy of the storage volume; restore test (spec section 13/14).
 4. **Review on screen** the forms not yet viewed: QC-02, QE-03, PA-04, MPV-03, contract; run print preview; dark mode; check the PDFs of QC-02/QE-03/PA-04/IM-08 visually (PR-01, PO-09, GR-06, MPV-03, contract were reviewed).
 5. **Test live**: the supplier signing link end to end with real mail.

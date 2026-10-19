@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { config } from '../config/config';
 
-/** Adapter: send(to, subject, html, text). Google Workspace = SMTP relay config (smtp-relay.gmail.com:587) or swap this class for a Gmail API sender. */
+/** Adapter: sends through Resend or SMTP, depending on MAIL_PROVIDER. */
 @Injectable()
 export class MailService {
   private transport = nodemailer.createTransport({
@@ -10,8 +10,24 @@ export class MailService {
     auth: config.mail.user ? { user: config.mail.user, pass: config.mail.pass } : undefined,
   });
 
-  send(to: string, subject: string, html: string, text: string) {
-    return this.transport.sendMail({ from: config.mail.from, to, subject, html, text });
+  async send(to: string, subject: string, html: string, text: string) {
+    if (config.mail.provider === 'smtp') {
+      return this.transport.sendMail({ from: config.mail.from, to, subject, html, text });
+    }
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.mail.resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from: config.mail.from, to, subject, html, text }),
+    });
+    const result: { id?: string; name?: string; message?: string } = await response.json();
+    if (!response.ok) {
+      throw new Error(`Resend email request failed (${response.status}): ${result.message ?? result.name ?? 'Unknown error'}`);
+    }
+    return result;
   }
 }
 
