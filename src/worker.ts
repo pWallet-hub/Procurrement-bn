@@ -42,8 +42,18 @@ async function main() {
         await queue.add('email', { notificationId: notification.id }, { jobId: `email-${notification.id}` });
       }
     },
-    'pdf.render': (job) => pdf.renderAndStore(job.data.documentId),
+    /** the purchase file merges the stored PDFs of the case, so it is built once the PDF of the document that closed it is stored */
+    async 'pdf.render'(job) {
+      await pdf.renderAndStore(job.data.documentId);
+      const closed = await db.one("SELECT c.id FROM documents d JOIN cases c ON c.id = d.case_id WHERE d.id = $1 AND c.status = 'closed'", [job.data.documentId]);
+      if (closed) await pdf.buildCaseFile(closed.id);
+    },
     'pdf.case_file': (job) => pdf.buildCaseFile(job.data.caseId),
+    /** fully signed documents whose PDF job never reached the queue (e.g. Redis was down at signing) */
+    async 'pdf.requeue'() {
+      const stuck = await db.query("SELECT id FROM documents WHERE state = 'signed' AND pdf_object_key IS NULL AND updated_at < now() - interval '2 minutes' LIMIT 50");
+      for (const d of stuck.rows) await queue.add('pdf.render', { documentId: d.id }, { jobId: `pdf-${d.id}-requeue` });
+    },
 
     /** daily: remind signers whose slot has waited longer than REMINDER_DAYS */
     async reminder() {
@@ -95,6 +105,7 @@ async function main() {
   // schedules (idempotent upserts)
   const q = queue.queue;
   await q.upsertJobScheduler('email-requeue', { pattern: '* * * * *' }, { name: 'email.requeue' });
+  await q.upsertJobScheduler('pdf-requeue', { pattern: '*/5 * * * *' }, { name: 'pdf.requeue' });
   await q.upsertJobScheduler('daily-reminder', { pattern: '0 7 * * *' }, { name: 'reminder' });
   await q.upsertJobScheduler('daily-expiry', { pattern: '15 7 * * *' }, { name: 'expiry' });
   await q.upsertJobScheduler('daily-token-cleanup', { pattern: '30 2 * * *' }, { name: 'token.cleanup' });

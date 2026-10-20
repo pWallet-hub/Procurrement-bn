@@ -115,20 +115,25 @@ export class PdfService {
 
   /** Job: merge every signed PDF and PDF attachment of a closed case into one purchase file. */
   async buildCaseFile(caseId: string) {
-    const docs = (await this.db.query("SELECT id, pdf_object_key FROM documents WHERE case_id = $1 AND pdf_object_key IS NOT NULL ORDER BY created_at", [caseId])).rows;
-    const atts = (await this.db.query("SELECT object_key FROM attachments WHERE case_id = $1 AND mime = 'application/pdf' AND COALESCE(kind,'') <> 'purchase_file' ORDER BY uploaded_at", [caseId])).rows;
-    const out = await LibDoc.create();
-    for (const k of [...docs.map((d) => d.pdf_object_key), ...atts.map((a) => a.object_key)]) {
-      try {
-        const src = await LibDoc.load(await this.storage.get(k), { ignoreEncryption: true });
-        for (const p of await out.copyPages(src, src.getPageIndices())) out.addPage(p);
-      } catch (e: any) { this.log.warn(`skipped ${k}: ${e.message}`); }
-    }
-    const body = Buffer.from(await out.save());
-    const key = `cases/${caseId}/purchase-file.pdf`;
-    await this.storage.put(key, body, 'application/pdf');
-    await this.db.query("DELETE FROM attachments WHERE case_id = $1 AND kind = 'purchase_file'", [caseId]);
-    await this.db.query(`INSERT INTO attachments (case_id, kind, filename, mime, size_bytes, sha256, object_key) VALUES ($1,'purchase_file','purchase-file.pdf','application/pdf',$2,$3,$4)`, [caseId, body.length, sha256(body), key]);
-    await this.audit.log({ action: 'case.purchase_file_built', objectType: 'case', objectId: caseId, caseId, detail: { sha256: sha256(body) } });
+    // one build per case at a time, reading the stored PDFs only once it holds the lock: concurrent pdf.render jobs
+    // of a closed case each rebuild the file, and an older build must never finish last and overwrite a newer one
+    await this.db.tx(async (c) => {
+      await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`case-file:${caseId}`]);
+      const docs = (await c.query("SELECT id, pdf_object_key FROM documents WHERE case_id = $1 AND pdf_object_key IS NOT NULL ORDER BY created_at", [caseId])).rows;
+      const atts = (await c.query("SELECT object_key FROM attachments WHERE case_id = $1 AND mime = 'application/pdf' AND COALESCE(kind,'') <> 'purchase_file' ORDER BY uploaded_at", [caseId])).rows;
+      const out = await LibDoc.create();
+      for (const k of [...docs.map((d) => d.pdf_object_key), ...atts.map((a) => a.object_key)]) {
+        try {
+          const src = await LibDoc.load(await this.storage.get(k), { ignoreEncryption: true });
+          for (const p of await out.copyPages(src, src.getPageIndices())) out.addPage(p);
+        } catch (e: any) { this.log.warn(`skipped ${k}: ${e.message}`); }
+      }
+      const body = Buffer.from(await out.save());
+      const key = `cases/${caseId}/purchase-file.pdf`;
+      await this.storage.put(key, body, 'application/pdf');
+      await c.query("DELETE FROM attachments WHERE case_id = $1 AND kind = 'purchase_file'", [caseId]);
+      await c.query(`INSERT INTO attachments (case_id, kind, filename, mime, size_bytes, sha256, object_key) VALUES ($1,'purchase_file','purchase-file.pdf','application/pdf',$2,$3,$4)`, [caseId, body.length, sha256(body), key]);
+      await this.audit.log({ action: 'case.purchase_file_built', objectType: 'case', objectId: caseId, caseId, detail: { sha256: sha256(body) } }, c);
+    });
   }
 }

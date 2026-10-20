@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PoolClient } from 'pg';
 import { Db, Queryable } from '../db/db.service';
 import { AuditService } from '../audit/audit.service';
@@ -25,6 +25,7 @@ const DATA_URL = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/;
 
 @Injectable()
 export class DocumentsService {
+  private log = new Logger('Documents');
   constructor(
     private db: Db, private audit: AuditService, private templates: TemplatesService, private wf: WorkflowService,
     private notify: NotificationsService, private queue: QueueService, private storage: StorageService,
@@ -288,8 +289,12 @@ export class DocumentsService {
 
   async afterSign(out: any) {
     await this.notify.flush();
-    if (out?.after?.pdf) await this.queue.add('pdf.render', { documentId: out.after.pdf }, { jobId: `pdf-${out.after.pdf}-${Date.now()}` });
-    if (out?.after?.caseFile) await this.queue.add('pdf.case_file', { caseId: out.after.caseFile });
+    // the worker also builds the case purchase file once this PDF is stored (it merges the stored PDFs);
+    // if Redis is down the signature still stands and the worker's pdf.requeue job renders it later
+    if (out?.after?.pdf) {
+      await this.queue.add('pdf.render', { documentId: out.after.pdf }, { jobId: `pdf-${out.after.pdf}-${Date.now()}` })
+        .catch((e) => this.log.warn(`could not enqueue pdf.render ${out.after.pdf} (will be requeued): ${e.message}`));
+    }
   }
 
   /** Store `buf` as the account's saved signature (used by method "saved" and the Profile page). */
@@ -373,9 +378,8 @@ export class DocumentsService {
       await c.query("UPDATE documents SET state = 'signed', updated_at = now() WHERE id = $1", [doc.id]);
       await this.audit.log({ actorId: actor.userId, action: 'document.completed', objectType: 'document', objectId: doc.id, caseId: doc.case_id }, c);
       const mergedFinal = this.mergedData(doc, await this.slotsOf(c, doc.id));
-      const wfres = await this.wf.onDocumentSigned(c, { ...doc, data: { ...doc.data, ...mergedFinal } }, actor.userId);
+      await this.wf.onDocumentSigned(c, { ...doc, data: { ...doc.data, ...mergedFinal } }, actor.userId);
       after.pdf = doc.id;
-      if (wfres.closed) after.caseFile = doc.case_id;
       await this.notifyCompleted(c, doc, tpl);
       if (doc.doc_type === 'IM-08') await this.notifyFollowUps(c, doc, mergedFinal, tpl);
     } else {
