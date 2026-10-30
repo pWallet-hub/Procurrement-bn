@@ -9,6 +9,7 @@ import { AuthUser, USER_SQL } from '../common/auth';
 import { AppError, badRequest, unauthorized } from '../common/errors';
 import { randomToken, sha256 } from '../common/hash';
 import { APPROVER_ROLES } from './permissions';
+import { requireAccess, setCentralRole } from '../sso/afs';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -66,12 +67,27 @@ export class AuthService {
     return this.issue(await this.me(p.sub), ip);
   }
 
+  /** A session for an account that was authenticated elsewhere (AFS SSO). Same tokens as a password sign-in. */
+  async issueFor(userId: string, ip: string | null) {
+    return this.issue(await this.me(userId), ip);
+  }
+
   async refresh(token: string) {
     const h = sha256(token);
     const row = await this.db.one('SELECT id, user_id FROM refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()', [h]);
     if (!row) throw unauthorized('Refresh token invalid');
-    const u = await this.db.one('SELECT active FROM users WHERE id = $1', [row.user_id]);
+    const u = await this.db.one('SELECT active, external_id FROM users WHERE id = $1', [row.user_id]);
     if (!u?.active) throw unauthorized();
+    if (u.external_id) {
+      // SSO accounts: AFS must still grant access, and the role is re-applied. Removed access ends the session here,
+      // so the bound is the access token lifetime (15 minutes) rather than the refresh token lifetime (7 days).
+      try {
+        await setCentralRole(this.db, row.user_id, await requireAccess(this.db, u.external_id));
+      } catch {
+        await this.db.query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [row.id]);
+        throw unauthorized('Your access to Procurement has ended. Sign in again.');
+      }
+    }
     await this.db.query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [row.id]); // rotate
     const next = randomToken();
     await this.db.query('INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1,$2, now() + ($3 || \' days\')::interval)', [row.user_id, sha256(next), String(config.refreshTtlDays)]);

@@ -30,6 +30,16 @@ x-app-env: &app-env
   ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Passw0rd!dev}
   ADMIN_NAME: ${ADMIN_NAME:-System Administrator}
   ADMIN_FORCE_RESET: ${ADMIN_FORCE_RESET:-false}
+  # AFS single sign-on through AFS Command Center. Off unless AFS_SSO_ENABLED=true (see docs/integrations/procurement.md).
+  AFS_SSO_ENABLED: ${AFS_SSO_ENABLED:-false}
+  AFS_OIDC_ISSUER: ${AFS_OIDC_ISSUER:-}
+  AFS_OIDC_INTERNAL_ISSUER: ${AFS_OIDC_INTERNAL_ISSUER:-}
+  AFS_OIDC_CLIENT_ID: ${AFS_OIDC_CLIENT_ID:-}
+  AFS_OIDC_CLIENT_SECRET: ${AFS_OIDC_CLIENT_SECRET:-}
+  AFS_OIDC_REDIRECT_URI: ${AFS_OIDC_REDIRECT_URI:-}
+  AFS_COMMAND_CENTER_URL: ${AFS_COMMAND_CENTER_URL:-}
+  AFS_SERVICE_TOKEN: ${AFS_SERVICE_TOKEN:-}
+  AFS_APP_SLUG: ${AFS_APP_SLUG:-procurement}
 
 services:
   postgres:

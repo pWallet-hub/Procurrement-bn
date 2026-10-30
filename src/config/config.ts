@@ -1,6 +1,31 @@
 const env = process.env;
 const num = (v: string | undefined, d: number) => (v ? Number(v) : d);
 
+/** AFS single sign-on (Keycloak OIDC through AFS Command Center). Null when disabled. */
+function ssoFromEnv() {
+  if (env.AFS_SSO_ENABLED !== 'true') return null;
+  const appUrl = (env.APP_URL ?? 'http://localhost:5173').replace(/\/$/, '');
+  const sso = {
+    issuer: env.AFS_OIDC_ISSUER || '',
+    /** Issuer as this API reaches Keycloak on the internal network. Defaults to AFS_OIDC_ISSUER. */
+    internalIssuer: env.AFS_OIDC_INTERNAL_ISSUER || env.AFS_OIDC_ISSUER || '',
+    clientId: env.AFS_OIDC_CLIENT_ID || '',
+    clientSecret: env.AFS_OIDC_CLIENT_SECRET || '',
+    /** Must match the redirect URI registered for the client in Keycloak. Defaults to the portal's proxied callback. */
+    redirectUri: env.AFS_OIDC_REDIRECT_URI || `${appUrl}/api/v1/auth/sso/callback`,
+    commandCenterUrl: env.AFS_COMMAND_CENTER_URL || '',
+    serviceToken: env.AFS_SERVICE_TOKEN || '',
+    appSlug: env.AFS_APP_SLUG || 'procurement',
+  };
+  const required: Record<string, string> = {
+    AFS_OIDC_ISSUER: sso.issuer, AFS_OIDC_CLIENT_ID: sso.clientId, AFS_OIDC_CLIENT_SECRET: sso.clientSecret,
+    AFS_COMMAND_CENTER_URL: sso.commandCenterUrl, AFS_SERVICE_TOKEN: sso.serviceToken,
+  };
+  const missing = Object.keys(required).filter((k) => !required[k]);
+  if (missing.length) throw new Error(`AFS_SSO_ENABLED=true requires: ${missing.join(', ')}`);
+  return sso;
+}
+
 export const config = {
   nodeEnv: env.NODE_ENV ?? 'development',
   isProd: env.NODE_ENV === 'production',
@@ -34,6 +59,7 @@ export const config = {
     name: env.ADMIN_NAME ?? 'System Administrator',
     forceReset: env.ADMIN_FORCE_RESET === 'true',
   },
+  sso: ssoFromEnv(),
   seedOnStart: env.SEED_ON_START === 'true',
   seedPassword: env.SEED_PASSWORD ?? 'Passw0rd!dev',
   maxUploadBytes: 20 * 1024 * 1024,

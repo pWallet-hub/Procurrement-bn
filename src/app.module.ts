@@ -7,6 +7,8 @@ import { AuditService } from './audit/audit.service';
 import { AuditController } from './audit/audit.controller';
 import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
+import { SsoController } from './sso/sso.controller';
+import { SsoService } from './sso/sso.service';
 import { SignatureController } from './auth/signature.controller';
 import { AdminController } from './admin/admin.controller';
 import { LookupsController } from './admin/lookups.controller';
@@ -28,7 +30,7 @@ import { ReportsController } from './reports/reports.controller';
 import { HealthController } from './health.controller';
 
 const providers = [
-  Db, AuditService, AuthService, TemplatesService, WorkflowService, CasesService, DocumentsService,
+  Db, AuditService, AuthService, SsoService, TemplatesService, WorkflowService, CasesService, DocumentsService,
   StorageService, NotificationsService, QueueService, MailService, PdfService,
   { provide: APP_GUARD, useClass: AuthGuard }, { provide: APP_FILTER, useClass: AllExceptionsFilter },
 ];
@@ -37,7 +39,7 @@ const providers = [
 @Global()
 @Module({
   controllers: [
-    HealthController, AuthController, SignatureController, AdminController, LookupsController, TemplatesController, CasesController, DocumentsController,
+    HealthController, AuthController, SsoController, SignatureController, AdminController, LookupsController, TemplatesController, CasesController, DocumentsController,
     AttachmentsController, NotificationsController, AuditController, VerifyController, ReportsController,
   ],
   providers,
