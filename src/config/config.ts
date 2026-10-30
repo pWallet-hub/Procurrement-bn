@@ -39,6 +39,11 @@ export const config = {
   accessTtl: num(env.ACCESS_TTL_SECONDS, 900),
   refreshTtlDays: num(env.REFRESH_TTL_DAYS, 7),
   totpRequired: env.TOTP_REQUIRED === 'true',
+  /**
+   * Password sign-in, invitations and password changes. Procurement users are AFS users, so production turns this off
+   * and AFS single sign-on is the only way in. Defaults to on for local development and existing deployments.
+   */
+  passwordLogin: env.PASSWORD_LOGIN !== 'false',
   storage: {
     driver: (env.STORAGE_DRIVER ?? 'local') as 's3' | 'local',
     localDir: env.STORAGE_LOCAL_DIR ?? './storage',

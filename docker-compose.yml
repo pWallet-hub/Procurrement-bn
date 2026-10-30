@@ -16,6 +16,8 @@ x-app-env: &app-env
   ACCESS_TTL_SECONDS: ${ACCESS_TTL_SECONDS:-900}
   REFRESH_TTL_DAYS: ${REFRESH_TTL_DAYS:-7}
   TOTP_REQUIRED: ${TOTP_REQUIRED:-false}
+  # false in production: AFS single sign-on is the only way in (no passwords, invitations or password changes).
+  PASSWORD_LOGIN: ${PASSWORD_LOGIN:-true}
   STORAGE_DRIVER: s3
   S3_ENDPOINT: http://storage:8333
   S3_REGION: us-east-1

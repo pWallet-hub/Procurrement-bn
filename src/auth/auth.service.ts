@@ -38,6 +38,7 @@ export class AuthService {
   }
 
   async login(email: string, password: string, ip: string | null) {
+    if (!config.passwordLogin) throw new AppError(403, 'auth.sso_only', 'Sign in with your AFS account');
     const row = await this.db.one('SELECT id, password_hash, failed_logins, locked_until, totp_enabled FROM users WHERE email = $1 AND active', [email]);
     const fail = async () => {
       if (row) {
@@ -102,6 +103,8 @@ export class AuthService {
 
   /** Create a one time invitation (or reset) link for a user and e-mail it. */
   async createInvite(userId: string, kind: 'invite' | 'reset' = 'invite') {
+    // Without password sign-in there is nothing to invite people to: they sign in with AFS.
+    if (!config.passwordLogin) return;
     const token = randomToken();
     await this.db.query('UPDATE user_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [userId]);
     await this.db.query('INSERT INTO user_tokens (user_id, kind, token_hash, expires_at) VALUES ($1,$2,$3, now() + ($4 || \' hours\')::interval)', [userId, kind, sha256(token), String(config.inviteHours)]);
@@ -111,6 +114,7 @@ export class AuthService {
   }
 
   async acceptInvite(token: string, password: string, ip: string | null) {
+    if (!config.passwordLogin) throw new AppError(403, 'auth.sso_only', 'Accounts sign in with AFS. No password is needed.');
     if (password.length < 10) throw badRequest('auth.weak_password', 'Password must be at least 10 characters', { password: 'at least 10 characters' });
     const row = await this.db.one('SELECT id, user_id FROM user_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()', [sha256(token)]);
     if (!row) throw new AppError(400, 'auth.invalid_invite', 'This link is invalid or has expired');
@@ -136,6 +140,7 @@ export class AuthService {
   }
 
   async changePassword(user: AuthUser, current: string, next: string, ip: string | null) {
+    if (!config.passwordLogin) throw new AppError(403, 'auth.sso_only', 'Passwords are managed by AFS. Change it there.');
     if (!next || next.length < 10) throw badRequest('auth.weak_password', 'New password must be at least 10 characters', { new_password: 'at least 10 characters' });
     const row = await this.db.one('SELECT password_hash FROM users WHERE id = $1', [user.id]);
     if (!row?.password_hash || !(await argon2.verify(row.password_hash, current ?? ''))) throw new AppError(400, 'auth.invalid_credentials', 'Current password is wrong', { current_password: 'wrong password' });

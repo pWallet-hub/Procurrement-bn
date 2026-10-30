@@ -16,6 +16,12 @@ const CODE_TTL_SECONDS = 60;
 
 const base64url = (b: Buffer) => b.toString('base64url');
 
+/** The name AFS holds for this person, falling back to the email so the account always has a name. */
+function displayName(claims: any): string {
+  const full = [claims.given_name, claims.family_name].filter((part) => typeof part === 'string' && part.trim()).join(' ');
+  return (typeof claims.name === 'string' && claims.name.trim()) || full || String(claims.email);
+}
+
 /** Only same-site paths are accepted after sign-in (no open redirect). Anything else goes to the portal's home page. */
 export function safeNextPath(value: unknown): string {
   if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) return '/';
@@ -113,7 +119,7 @@ export class SsoService {
 
     // AFS decides first. Nothing is linked for an employee AFS has not assigned.
     const role = await requireAccess(this.db, sub);
-    const userId = await this.linkedUserId(sub, String(claims.email), ip);
+    const userId = await this.linkedUserId(sub, String(claims.email), displayName(claims), ip);
     await setCentralRole(this.db, userId, role);
     await this.audit.log({ actorId: userId, ip, action: 'auth.sso_login', objectType: 'user', objectId: userId, detail: { role } });
     return userId;
@@ -149,19 +155,29 @@ export class SsoService {
     }
   }
 
-  /** The account linked to this identity, or the existing account with the same verified email, which is then linked. */
-  private async linkedUserId(sub: string, email: string, ip: string | null): Promise<string> {
+  /**
+   * The account linked to this identity. Otherwise the existing account with the same verified email is linked, or, if
+   * there is none, an account is created from the AFS identity. AFS has already granted access by this point, so every
+   * account that reaches here belongs to someone AFS has assigned to Procurement.
+   */
+  private async linkedUserId(sub: string, email: string, name: string, ip: string | null): Promise<string> {
     const byIdentity = await this.db.one('SELECT id, active FROM users WHERE external_id = $1', [sub]);
     if (byIdentity) {
       if (!byIdentity.active) throw new SsoFailure('disabled');
       return byIdentity.id;
     }
-    const byEmail = await this.db.one('SELECT id, active, external_id FROM users WHERE email = $1', [email.trim().toLowerCase()]);
-    if (!byEmail || byEmail.external_id) throw new SsoFailure('no_account');
-    if (!byEmail.active) throw new SsoFailure('disabled');
-    await this.db.query('UPDATE users SET external_id = $1 WHERE id = $2', [sub, byEmail.id]);
-    await this.audit.log({ actorId: byEmail.id, ip, action: 'auth.sso_link', objectType: 'user', objectId: byEmail.id });
-    return byEmail.id;
+    const normalized = email.trim().toLowerCase();
+    const byEmail = await this.db.one('SELECT id, active, external_id FROM users WHERE email = $1', [normalized]);
+    if (byEmail?.external_id) throw new SsoFailure('no_account');
+    if (byEmail) {
+      if (!byEmail.active) throw new SsoFailure('disabled');
+      await this.db.query('UPDATE users SET external_id = $1 WHERE id = $2', [sub, byEmail.id]);
+      await this.audit.log({ actorId: byEmail.id, ip, action: 'auth.sso_link', objectType: 'user', objectId: byEmail.id });
+      return byEmail.id;
+    }
+    const created = await this.db.one('INSERT INTO users (email, full_name, external_id) VALUES ($1, $2, $3) RETURNING id', [normalized, name, sub]);
+    await this.audit.log({ actorId: created.id, ip, action: 'auth.sso_provision', objectType: 'user', objectId: created.id });
+    return created.id;
   }
 
   /** A one-time code for the portal. Only its hash is stored. */

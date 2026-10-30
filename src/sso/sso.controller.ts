@@ -17,7 +17,8 @@ export class SsoController {
 
   @Get('config')
   settings() {
-    return { enabled: this.sso.enabled };
+    // password_login tells the portal whether a password form is offered at all. Production runs AFS-only.
+    return { enabled: this.sso.enabled, password_login: config.passwordLogin };
   }
 
   @Get('login')
