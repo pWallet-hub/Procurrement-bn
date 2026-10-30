@@ -1,6 +1,11 @@
 const env = process.env;
 const num = (v: string | undefined, d: number) => (v ? Number(v) : d);
 
+/** Production defaults to AFS-only. Set PASSWORD_LOGIN=true explicitly only for a deployment that needs a password. */
+export function passwordLoginEnabled(e: NodeJS.ProcessEnv): boolean {
+  return e.PASSWORD_LOGIN ? e.PASSWORD_LOGIN === 'true' : e.NODE_ENV !== 'production';
+}
+
 /** AFS single sign-on (Keycloak OIDC through AFS Command Center). Null when disabled. */
 function ssoFromEnv() {
   if (env.AFS_SSO_ENABLED !== 'true') return null;
@@ -43,7 +48,7 @@ export const config = {
    * Password sign-in, invitations and password changes. Procurement users are AFS users, so production turns this off
    * and AFS single sign-on is the only way in. Defaults to on for local development and existing deployments.
    */
-  passwordLogin: env.PASSWORD_LOGIN !== 'false',
+  passwordLogin: passwordLoginEnabled(env),
   storage: {
     driver: (env.STORAGE_DRIVER ?? 'local') as 's3' | 'local',
     localDir: env.STORAGE_LOCAL_DIR ?? './storage',
