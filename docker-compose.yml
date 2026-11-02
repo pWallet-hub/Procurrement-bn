@@ -70,7 +70,7 @@ services:
   # S3 compatible object store (SeaweedFS, Apache-2.0, actively maintained). The S3 key pair comes from the
   # variables, so no credentials file has to be mounted.
   storage:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs:3.80
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
