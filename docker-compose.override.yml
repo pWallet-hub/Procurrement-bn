@@ -7,3 +7,9 @@ services:
     ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
   api:
     ports: ["${API_PORT:-3000}:3000"]
+
+# Production joins Command Center's shared `afs-internal` network (external). Locally there is none, so use a private one.
+networks:
+  afs:
+    name: procurement-afs-local
+    external: false

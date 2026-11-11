@@ -70,7 +70,9 @@ services:
   # S3 compatible object store (SeaweedFS, Apache-2.0, actively maintained). The S3 key pair comes from the
   # variables, so no credentials file has to be mounted.
   storage:
-    image: chrislusf/seaweedfs:3.80
+    # Pinned. Production stored files with `latest` (4.4x) from 2026-10-02, so never pin below that: a downgrade can fail to
+    # read the data. 4.53 was tested opening data written by 4.48. Upgrade deliberately.
+    image: chrislusf/seaweedfs:4.53
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
@@ -93,6 +95,9 @@ services:
       <<: *app-env
       ROLE: api
     expose: ["3000"]
+    # `afs` reaches AFS Command Center's access check (AFS_COMMAND_CENTER_URL) and Keycloak privately; Command Center
+    # blocks /api/internal/ on its public address. See the networks section.
+    networks: [default, afs]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -111,6 +116,13 @@ services:
       <<: *app-env
     depends_on:
       api: { condition: service_healthy }   # api runs migrations and the seed first
+
+networks:
+  # Shared with the AFS Command Center stack, which creates it (deploy Command Center first). Only the API joins it.
+  # Locally, docker-compose.override.yml replaces it with a private network so the stack runs on its own.
+  afs:
+    name: afs-internal
+    external: true
 
 volumes:
   pgdata:
