@@ -96,8 +96,11 @@ services:
       ROLE: api
     expose: ["3000"]
     # `afs` reaches AFS Command Center's access check (AFS_COMMAND_CENTER_URL) and Keycloak privately; Command Center
-    # blocks /api/internal/ on its public address. See the networks section.
-    networks: [default, afs]
+    # blocks /api/internal/ on its public address. The portal (Procurrement-fn) reaches this API as `procurement-api`
+    # there: the host does not let containers reach its own public address, so https://apipro... fails from inside.
+    networks:
+      default: {}
+      afs: { aliases: [procurement-api] }
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
