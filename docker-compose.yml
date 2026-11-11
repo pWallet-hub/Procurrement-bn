@@ -96,7 +96,6 @@ services:
       ROLE: api
     expose: ["3000"]
     # `afs` reaches AFS Command Center's access check (AFS_COMMAND_CENTER_URL) and Keycloak privately; Command Center
-PROCUREMENT_REDIRECT_URI=https://procurement.afs-rwanda.org/api/v1/auth/sso/callback
     # blocks /api/internal/ on its public address. The portal (Procurrement-fn) reaches this API as `procurement-api`
     # there: the host does not let containers reach its own public address, so https://apipro... fails from inside.
     networks:
