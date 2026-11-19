@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { promises as fs } from 'fs';
 import { dirname, join, normalize } from 'path';
 import { config } from '../config/config';
@@ -43,6 +43,20 @@ export class StorageService implements OnModuleInit {
       return Buffer.from(await r.Body!.transformToByteArray());
     }
     return fs.readFile(this.localPath(key));
+  }
+
+  /** Health check: the bucket (or the local folder) is reachable and writable. Used by Administration > System health. */
+  async check(): Promise<{ driver: string; location: string }> {
+    const probe = `health/probe-${Date.now()}.txt`;
+    if (this.s3) {
+      await this.s3.send(new HeadBucketCommand({ Bucket: config.storage.bucket }));
+      await this.put(probe, Buffer.from('ok'), 'text/plain');
+      await this.s3.send(new DeleteObjectCommand({ Bucket: config.storage.bucket, Key: probe }));
+      return { driver: 's3', location: `${config.storage.endpoint} / ${config.storage.bucket}` };
+    }
+    await this.put(probe, Buffer.from('ok'), 'text/plain');
+    await fs.unlink(this.localPath(probe));
+    return { driver: 'local', location: config.storage.localDir };
   }
 
   private localPath(key: string) {

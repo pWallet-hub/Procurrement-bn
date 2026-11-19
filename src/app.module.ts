@@ -28,6 +28,7 @@ import { PdfService } from './pdf/pdf.service';
 import { VerifyController } from './verify/verify.controller';
 import { ReportsController } from './reports/reports.controller';
 import { HealthController } from './health.controller';
+import { SystemController } from './admin/system.controller';
 
 const providers = [
   Db, AuditService, AuthService, SsoService, TemplatesService, WorkflowService, CasesService, DocumentsService,
@@ -39,7 +40,7 @@ const providers = [
 @Global()
 @Module({
   controllers: [
-    HealthController, AuthController, SsoController, SignatureController, AdminController, LookupsController, TemplatesController, CasesController, DocumentsController,
+    HealthController, SystemController, AuthController, SsoController, SignatureController, AdminController, LookupsController, TemplatesController, CasesController, DocumentsController,
     AttachmentsController, NotificationsController, AuditController, VerifyController, ReportsController,
   ],
   providers,
