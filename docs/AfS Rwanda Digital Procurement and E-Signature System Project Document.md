@@ -52,7 +52,7 @@ Access is role based (RBAC) with an extra object level rule: a user sees a case 
 | `requesting_staff` | Prepared / Requested by; Requesting Staff | PR-01 requester, QC-02 acknowledgement, QE-03 reviewer 1, PA-04 received/verified |
 | `accountant` | Accountant; procurement focal person | PR-01 check, QC-02 check, MPV-03 cross-check, GR-06 budget check, PO-09 issuer, PA-04 payment prepared |
 | `director_comms` | Director of Communications | QE-03 reviewer 2 |
-| `director_dept` | Director of Department | GR-06 activity reviewer |
+| `director_dept` | Manager of Department | GR-06 activity reviewer |
 | `pi` | PI | PR-01 initial authorization, GR-06 final authorization, QE-03 reviewer 3, PO-09 authorization |
 | `cfm` | Chief Finance Manager | PA-04 final approval |
 | `market_verifier` | Market Verification Officer | MPV-03 verifier |

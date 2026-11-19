@@ -18,7 +18,12 @@ export class DocumentsController {
   }
   @Get('documents/:id') get(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.docs.get(id, u); }
   @Patch('documents/:id') patch(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: any) { return this.docs.patch(id, u, b); }
-  @Post('documents/:id/submit') submit(@CurrentUser() u: AuthUser, @Param('id') id: string, @IdemKey() k: string | null) { return this.docs.submit(id, u, k); }
+  /** Submit a draft. When the submitter is the creator who signs first (Prepared / Requested by), the body carries that
+   *  signature ({ signature: { method, signature_image | signature_text, declaration_accepted, ... } }): sign and submit are one step. */
+  @Post('documents/:id/submit')
+  submit(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: any, @ClientIp() ip: string | null, @UserAgent() ua: string | null, @IdemKey() k: string | null) {
+    return this.docs.submit(id, u, k, b?.signature ?? null, ip, ua);
+  }
   @Post('documents/:id/slots/:slot/sign')
   sign(@CurrentUser() u: AuthUser, @Param('id') id: string, @Param('slot') slot: string, @Body() b: any, @ClientIp() ip: string | null, @UserAgent() ua: string | null, @IdemKey() k: string | null) {
     return this.docs.signInternal(id, slot, u, b, ip, ua, k);

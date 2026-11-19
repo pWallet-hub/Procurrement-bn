@@ -267,7 +267,7 @@ const GR06: PaperBlock[] = [
   caps('E. Review & Approval'),
   { t: 'signoff', cells: [
     { slot: 'accountant_budget_check', label: 'ACCOUNTANT — BUDGET & CONTROL CHECK' },
-    { slot: 'director_activity_review', label: 'DIRECTOR OF DEPARTMENT — ACTIVITY REVIEWER' },
+    { slot: 'director_activity_review', label: 'MANAGER OF DEPARTMENT — ACTIVITY REVIEWER' },
     { slot: 'pi_final_authorization', label: 'PI — FINAL AUTHORIZATION' },
   ] },
   caps('F. Finance / Administration Action'),

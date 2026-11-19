@@ -3,7 +3,7 @@ export const ROLES: Record<string, string> = {
   requesting_staff: 'Requesting staff',
   accountant: 'Accountant / procurement focal person',
   director_comms: 'Director of Communications',
-  director_dept: 'Director of Department',
+  director_dept: 'Manager of Department',
   pi: 'Principal Investigator',
   cfm: 'Chief Finance Manager',
   market_verifier: 'Market Verification Officer',

@@ -69,7 +69,7 @@ export async function seed(): Promise<void> {
         ['staff@afs.local', 'Agape Staff', 'Communications Officer', 'Communications', ['requesting_staff']],
         ['accountant@afs.local', 'Alice Accountant', 'Accountant', 'Finance', ['accountant']],
         ['director.comms@afs.local', 'David Comms', 'Director of Communications', 'Communications', ['director_comms']],
-        ['director.dept@afs.local', 'Diane Dept', 'Director of Department', 'Programs', ['director_dept']],
+        ['director.dept@afs.local', 'Diane Dept', 'Manager of Department', 'Programs', ['director_dept']],
         ['pi@afs.local', 'Patrick PI', 'Principal Investigator', 'Programs', ['pi']],
         ['cfm@afs.local', 'Chantal CFM', 'Chief Finance Manager', 'Finance', ['cfm']],
         ['verifier@afs.local', 'Victor Verifier', 'Market Verification Officer', 'Administration', ['market_verifier']],

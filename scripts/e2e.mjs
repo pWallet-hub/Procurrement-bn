@@ -31,6 +31,9 @@ async function sign(docId, slot, token, doc, extra = {}) {
   return call('POST', `/documents/${docId}/slots/${slot}/sign`, token, { content_hash: doc.content_hash, declaration_accepted: true, conflict_confirmed: true, method: 'draw', signature_image: PNG, ...extra });
 }
 const getDoc = async (id, t) => (await call('GET', `/documents/${id}`, t));
+// The creator's own first box (Prepared / Requested by, Originating Staff, Traveller) is signed as part of submitting.
+const submitSigned = (docId, token, extra = {}) =>
+  call('POST', `/documents/${docId}/submit`, token, { signature: { declaration_accepted: true, conflict_confirmed: true, method: 'draw', signature_image: PNG, ...extra } });
 
 console.log('\n== guards & access');
 must(await call('GET', '/cases'), 401, 'unauthenticated is rejected');
@@ -48,16 +51,22 @@ const early = await call('POST', `/documents/${pr.id}/submit`, T.staff);
 ok(early.http === 422 && early.error.fields.items, 'submit of an empty PR-01 is rejected with field errors');
 pr = must(await call('PATCH', `/documents/${pr.id}`, T.staff, { data: { items: [{ description: 'Event banners', qty: 10, unit_cost: money(10000), est_unit_cost: money(10000) }], business_justification: 'Needed for the OFAB event', required_by_date: '2026-12-01', special_conditions: ['delivery'] } }), 200, 'autosave PR-01');
 ok(pr.data.items[0].est_total.amount === 100000, 'server computed est_total = 100000');
-const sub = must(await call('POST', `/documents/${pr.id}/submit`, T.staff), 201, 'submit PR-01');
+const unsigned = await call('POST', `/documents/${pr.id}/submit`, T.staff);
+ok(unsigned.http === 422 && unsigned.error.code === 'guard.signature_required', 'a complete PR-01 cannot be submitted without the requester signature');
+ok((await getDoc(pr.id, T.staff)).state === 'draft', 'and it stays a draft');
+const noDecl = await call('POST', `/documents/${pr.id}/submit`, T.staff, { signature: { method: 'draw', signature_image: PNG } });
+ok(noDecl.http === 422 && (await getDoc(pr.id, T.staff)).state === 'draft', 'a signature without the declaration is refused and nothing is submitted');
+const sub = must(await submitSigned(pr.id, T.staff), 201, 'sign & submit PR-01');
 ok(sub.state === 'in_signing' && /^[0-9a-f]{64}$/.test(sub.content_hash), 'frozen with sha256 content hash');
 const frozen = await call('PATCH', `/documents/${pr.id}`, T.staff, { data: { project_activity: 'tamper' } });
 ok(frozen.http === 422 && frozen.error.code === 'guard.frozen_after_sign', 'frozen_after_sign blocks edits');
 const tasks0 = await call('GET', '/signing/tasks', T.staff);
-ok(tasks0.items.some((t) => t.document_id === pr.id && t.slot_key === 'prepared_by'), 'requester sees the prepared_by task');
-const wrong = await sign(pr.id, 'received_checked', T.accountant, sub);
-ok(wrong.http === 403, 'accountant cannot sign out of order');
-must(await sign(pr.id, 'prepared_by', T.staff, sub, { content_hash: 'bad' }), 422, 'wrong content_hash is rejected');
-must(await sign(pr.id, 'prepared_by', T.staff, sub), 201, 'requester signs');
+ok(!tasks0.items.some((t) => t.document_id === pr.id), 'the requester has nothing left to sign: their box was signed at submit');
+const prepared = sub.slots.find((s) => s.slot_key === 'prepared_by');
+ok(prepared.status === 'signed' && !!prepared.signature, 'Prepared / Requested by is signed, with the signature stored');
+const wrong = await sign(pr.id, 'pi_initial', T.pi, sub);
+ok(wrong.http === 403, 'PI cannot sign out of order');
+must(await sign(pr.id, 'received_checked', T.accountant, sub, { content_hash: 'bad' }), 422, 'wrong content_hash is rejected');
 must(await sign(pr.id, 'received_checked', T.accountant, sub), 201, 'accountant signs');
 const last = must(await sign(pr.id, 'pi_initial', T.pi, sub), 201, 'PI signs');
 ok(last.document_state === 'signed', 'PR-01 fully signed');
@@ -200,8 +209,7 @@ ok((await call('GET', `/verify/${pr.id}`, null)).ok === true, 'verify passes aga
 
 console.log('\n== IM-08 memo with decision at the superior slot');
 const memo = must(await call('POST', '/documents', T.staff, { doc_type: 'IM-08', data: { memo_reference_name: 'Printing of banners', department_office: 'Communications', issue_description: 'We need banners', recommendation: 'Procure 10 banners' } }), 201, 'create IM-08');
-const msub = must(await call('POST', `/documents/${memo.id}/submit`, T.staff), 201, 'submit IM-08 (decision fields not required yet)');
-must(await sign(memo.id, 'originating_staff', T.staff, msub), 201, 'originator signs');
+const msub = must(await submitSigned(memo.id, T.staff), 201, 'sign & submit IM-08 (decision fields not required yet)');
 const bare = await sign(memo.id, 'superior', T.superior, msub);
 ok(bare.http === 422 && bare.error.fields.decision_status, 'superior must fill the decision');
 const dec = must(await sign(memo.id, 'superior', T.superior, msub, { data: { decision_status: 'approved', priority: 'high', action_types: ['procurement_process'], follow_up: [{ staff: me.id, action_assigned: 'Create the requisition', due_date: '2026-10-30' }] } }), 201, 'superior decides');
@@ -221,10 +229,9 @@ ok(got.status === 200 && got.headers.get('content-type') === 'image/png', 'saved
 ok((await call('GET', '/me', T.staff)).has_signature === true, '/me says has_signature=true');
 const memo2 = must(await call('POST', '/documents', T.staff, { doc_type: 'IM-08', data: { memo_reference_name: 'Saved sig memo', department_office: 'Communications', issue_description: 'x', recommendation: 'y' } }), 201, 'create IM-08 for the saved-signature test');
 ok(memo2.data.date_submitted === today, 'IM-08 date_submitted filled automatically with today');
-const msub2 = must(await call('POST', `/documents/${memo2.id}/submit`, T.staff), 201, 'submit');
-const noSaved = await call('POST', `/documents/${memo2.id}/slots/originating_staff/sign`, T.staff, { content_hash: 'bad', declaration_accepted: true, method: 'saved' });
+const msub2 = must(await submitSigned(memo2.id, T.staff, { method: 'saved', signature_image: undefined }), 201, 'sign & submit with the saved signature (one click)');
+const noSaved = await call('POST', `/documents/${memo2.id}/slots/superior/sign`, T.superior, { content_hash: 'bad', declaration_accepted: true, method: 'saved' });
 ok(noSaved.http === 422, 'hash is still checked for saved-signature signing');
-must(await sign(memo2.id, 'originating_staff', T.staff, msub2, { method: 'saved', signature_image: undefined }), 201, 'sign with the saved signature (one click)');
 const slotImg = await fetch(`${API}/documents/${memo2.id}/slots/originating_staff/signature.png`, { headers: { Authorization: `Bearer ${T.staff}` } });
 ok(slotImg.status === 200, 'signature image stored with the document');
 const before = Buffer.from(await slotImg.arrayBuffer());
@@ -238,9 +245,8 @@ must(await call('DELETE', '/me/signature', T.staff), 200, 'saved signature delet
 ok((await sigGet(T.staff)).status === 404, 'and it is gone');
 // save_signature flag on a drawn signature
 const memo3 = must(await call('POST', '/documents', T.superior, { doc_type: 'IM-08', data: { memo_reference_name: 'Save flag', department_office: 'Programs', issue_description: 'x', recommendation: 'y' } }), 201, 'create IM-08 as superior');
-const msub3 = must(await call('POST', `/documents/${memo3.id}/submit`, T.superior), 201, 'submit');
 ok((await call('GET', '/me', T.superior)).has_signature === false, 'superior has no saved signature yet');
-must(await sign(memo3.id, 'originating_staff', T.superior, msub3, { save_signature: true }), 201, 'drawing a signature with save_signature=true signs');
+must(await submitSigned(memo3.id, T.superior, { save_signature: true }), 201, 'sign & submit with a drawn signature and save_signature=true');
 ok((await call('GET', '/me', T.superior)).has_signature === true, 'and it was saved on the account for next time');
 await call('DELETE', '/me/signature', T.superior);
 const prDraft = must(await call('POST', '/cases', T.staff, { project: 'Dates', budget_line_id: bl.id }), 201, 'new case for the date defaults');
@@ -311,8 +317,7 @@ ok(/on or after 02\/11\/2026/.test(badDates.error.hints?.return_date ?? ''), 'th
 const saved = await getDoc(tc.id, T.staff);
 ok(!!saved.validation?.errors?.return_date && !!saved.validation?.hints?.return_date, 'the draft shows the date problem with a hint before submit');
 must(await call('PATCH', `/documents/${tc.id}`, T.staff, { data: { return_date: '2026-11-04' } }), 200, 'fix the return date');
-tc = must(await call('POST', `/documents/${tc.id}/submit`, T.staff), 201, 'submit TC-10 without costs');
-must(await sign(tc.id, 'traveller', T.staff, tc), 201, 'traveller signs');
+tc = must(await submitSigned(tc.id, T.staff), 201, 'traveller signs & submits TC-10 without costs');
 tc = await getDoc(tc.id, T.staff);
 ok(tc.slots.find((s) => s.slot_key === 'supervisor')?.assigned_user?.id === dirMe.id, 'supervisor slot goes to the person named on the form');
 ok([403, 404].includes((await sign(tc.id, 'supervisor', T['director.comms'], tc)).http), 'another director cannot sign for the supervisor');
@@ -334,9 +339,8 @@ let tcA = must(await call('POST', '/documents', T.admin, { doc_type: 'TC-10', da
 ok(tcA.data.transport_cost?.amount === 12_000 && tcA.data.total_amount?.amount === 162_000, 'admin draft keeps the costs; total = (15 + 16) x days + transport');
 tcA = must(await call('PATCH', `/documents/${tcA.id}`, T.admin, { data: { transport_cost: money(10_000) } }), 200, 'admin changes the transport cost in the draft');
 ok(tcA.data.total_amount?.amount === 160_000, 'total follows the transport cost while editing');
-tcA = must(await call('POST', `/documents/${tcA.id}/submit`, T.admin), 201, 'admin submits the TC-10');
+tcA = must(await submitSigned(tcA.id, T.admin), 201, 'admin signs as the requester & submits the TC-10');
 ok(tcA.data.transport_cost?.amount === 10_000 && tcA.data.total_amount?.amount === 160_000, 'costs entered by the admin are frozen with the clearance');
-must(await sign(tcA.id, 'traveller', T.admin, tcA), 201, 'admin signs as the requester');
 must(await sign(tcA.id, 'supervisor', dirDept, tcA), 201, 'supervisor signs the admin-created clearance');
 must(await sign(tcA.id, 'admin_costs', T.admin, tcA), 201, 'admin confirms the costs at the costs step without retyping them');
 ok((await getDoc(tcA.id, T.admin)).data.total_amount?.amount === 160_000, 'total unchanged after the costs step');
@@ -347,7 +351,7 @@ ok(ext.data.issued_to === undefined && ext.data.issued_to_name === 'Jane Visitor
 const extBad = await call('POST', `/documents/${ext.id}/submit`, T.staff);
 ok(extBad.http === 422 && /passport/.test(extBad.error.fields.id_number ?? ''), 'submit refuses a wrong passport number');
 must(await call('PATCH', `/documents/${ext.id}`, T.staff, { data: { id_number: 'pc 1234567' } }), 200, 'fix the passport number');
-ext = must(await call('POST', `/documents/${ext.id}/submit`, T.staff), 201, 'external TC-10 submits');
+ext = must(await submitSigned(ext.id, T.staff), 201, 'external TC-10: requester signs & submits');
 ok(ext.data.id_number === 'PC1234567', 'passport stored in upper case without spaces');
 
 if (failures.length) { console.log(`\n${passed} passed, ${failures.length} FAILED:`); failures.forEach((f) => console.log(' -', f)); process.exit(1); }

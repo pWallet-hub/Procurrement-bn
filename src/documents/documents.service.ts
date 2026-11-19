@@ -197,7 +197,13 @@ export class DocumentsService {
 
   // ---------- submit ----------
 
-  async submit(id: string, user: AuthUser, idem: string | null) {
+  /**
+   * Submit a draft for signing. The creator's own first signature (Prepared / Requested by, Originating Staff, Traveller:
+   * slots with assign 'creator' in the first sequence) is part of submitting: `signature` must be given and is applied
+   * in the same transaction, so a request never goes out without its requester's signature.
+   */
+  async submit(id: string, user: AuthUser, idem: string | null, signature: any = null, ip: string | null = null, ua: string | null = null) {
+    let signed: any = null;
     const res = await this.db.tx(async (c) => {
       const doc = await this.loadVisible(c, id, user, true);
       if (await this.idemGet(c, idem, user.id, `submit:${id}`)) return { done: true };
@@ -230,12 +236,24 @@ export class DocumentsService {
       }
       await c.query("UPDATE documents SET state = 'in_signing', data = $2, content_hash = $3, returned_reason = NULL, updated_at = now() WHERE id = $1", [id, JSON.stringify(data), hash]);
       await this.audit.log({ actorId: user.id, ip: null, action: 'document.submitted', objectType: 'document', objectId: id, caseId: doc.case_id, detail: { content_hash: hash, version: doc.version } }, c);
-      for (const s of created.filter((x) => x.status === 'pending')) await this.activateSlot(c, { ...doc, data }, tpl, s);
+
+      // the submitter's own first signature: required, and applied now (it opens the next signatures itself)
+      const ownKeys = new Set(slotDefs.filter((s) => s.assign === 'creator' && s.seq === minSeq).map((s) => s.key));
+      const own = created.find((s) => ownKeys.has(s.slot_key) && s.status === 'pending' && s.assigned_user_id === user.id);
+      if (own) {
+        if (!signature || typeof signature !== 'object') {
+          throw guardError('signature_required', `Sign the form as "${own.label}" to submit it`, { signature: 'required' });
+        }
+        const submitted = { ...doc, state: 'in_signing', data, content_hash: hash };
+        signed = await this.performSign(c, submitted, own, { userId: user.id, name: user.full_name, ip, ua, user }, { ...signature, content_hash: hash });
+      }
+      for (const s of created.filter((x) => x.status === 'pending' && x.id !== own?.id)) await this.activateSlot(c, { ...doc, data }, tpl, s);
       await this.idemPut(c, idem, user.id, `submit:${id}`, { done: true });
       return { done: true };
     });
     void res;
-    await this.notify.flush();
+    if (signed) await this.afterSign(signed);
+    else await this.notify.flush();
     return this.get(id, user);
   }
 

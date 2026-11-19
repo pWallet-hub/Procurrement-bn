@@ -38,7 +38,7 @@ export const GR06: TemplateDef = {
   signature_slots: [
     { key: 'prepared_by', label: 'Requested / Prepared by', role: 'requesting_staff', seq: 1, declaration: 'I confirm this request is accurate.', assign: 'creator' },
     { key: 'accountant_budget_check', label: 'Accountant — Budget & Control Check', role: 'accountant', seq: 2, declaration: 'I checked the budget line.' },
-    { key: 'director_activity_review', label: 'Director of Department — Activity Reviewer', role: 'director_dept', seq: 3, declaration: 'I reviewed the activity.' },
+    { key: 'director_activity_review', label: 'Manager of Department — Activity Reviewer', role: 'director_dept', seq: 3, declaration: 'I reviewed the activity.' },
     { key: 'pi_final_authorization', label: 'PI — Final Authorization', role: 'pi', seq: 4, declaration: 'I authorize this request.' },
     { key: 'processed_by', label: 'Processed By', role: 'accountant', seq: 5, declaration: 'I processed the finance action recorded above.' },
   ],
