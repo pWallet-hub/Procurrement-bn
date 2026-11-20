@@ -1,4 +1,5 @@
 import { Field, TemplateDef } from './types';
+import { cond } from './conditions';
 
 export const amt = (v: any): number => (typeof v === 'number' ? v : v && typeof v === 'object' && 'amount' in v ? Number(v.amount) || 0 : Number(v) || 0);
 const cur = (v: any): string | undefined => (v && typeof v === 'object' ? v.currency : undefined);
@@ -30,7 +31,10 @@ export function applyComputed(tpl: Pick<TemplateDef, 'schema'>, input: Record<st
     });
   }
 
+  // a total under a hidden section or field is not calculated (e.g. the TC-10 costs of an externally funded mission)
+  const hidden = new Set(tpl.schema.sections.flatMap((s) => s.fields.filter((f) => !cond(s.visible_if, data) || !cond(f.visible_if, data)).map((f) => f.key)));
   for (const f of fields.filter((x) => x.type === 'computed' && x.computed)) {
+    if (hidden.has(f.key)) { delete data[f.key]; continue; }
     const sp = f.computed!;
     if (sp.op === 'sum_rows') {
       const rows: any[] = data[sp.table!] ?? [];

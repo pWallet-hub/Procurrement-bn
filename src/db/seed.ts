@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 import * as argon2 from 'argon2';
 import { config } from '../config/config';
 import { ROLES, ROLE_PERMISSIONS } from '../auth/permissions';
-import { ALL_TEMPLATES } from '../templates/definitions';
+import { ALL_TEMPLATES, LEGACY_PAPER } from '../templates/definitions';
 
 /**
  * Initial administrator from ADMIN_EMAIL / ADMIN_PASSWORD. Created once; an existing account is never overwritten
@@ -42,6 +42,16 @@ export async function seed(): Promise<void> {
     for (const [role, perms] of Object.entries(ROLE_PERMISSIONS)) for (const p of perms) await pool.query('INSERT INTO role_permissions (role_code, permission) VALUES ($1,$2)', [role, p]);
 
     for (const t of ALL_TEMPLATES) {
+      // Older versions are printed like the current form: archived documents look the same as new ones (the printed
+      // layout, schema.paper, is presentation only and outside the document hash). A form whose fields changed keeps its
+      // old layout for the versions before the change (LEGACY_PAPER). The worker then redraws the stored PDFs.
+      const legacy = LEGACY_PAPER[t.code];
+      await pool.query("UPDATE form_templates SET schema = jsonb_set(schema, '{paper}', $3::jsonb) WHERE code = $1 AND version < $2 AND version >= $4",
+        [t.code, t.version, JSON.stringify(t.schema.paper ?? null), legacy?.below ?? 0]);
+      if (legacy) {
+        await pool.query("UPDATE form_templates SET schema = jsonb_set(schema, '{paper}', $3::jsonb) WHERE code = $1 AND version < $2",
+          [t.code, legacy.below, JSON.stringify(legacy.paper)]);
+      }
       // a template version already used by documents is never rewritten: bump `version` to change a live form
       const used = await pool.query('SELECT 1 FROM documents d JOIN form_templates f ON f.id = d.template_id WHERE f.code = $1 AND f.version = $2 LIMIT 1', [t.code, t.version]);
       if (used.rowCount) {

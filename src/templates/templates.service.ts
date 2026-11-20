@@ -19,6 +19,11 @@ export class TemplatesService {
     if (!t) throw notFound(`template ${code}`);
     return t;
   }
+  async byVersion(code: string, version: number): Promise<TemplateRow> {
+    const t = await this.db.one<TemplateRow>('SELECT * FROM form_templates WHERE code = $1 AND version = $2', [code, version]);
+    if (!t) throw notFound(`template ${code} v${version}`);
+    return t;
+  }
   async byId(id: string): Promise<TemplateRow> {
     const t = await this.db.one<TemplateRow>('SELECT * FROM form_templates WHERE id = $1', [id]);
     if (!t) throw notFound('template');
@@ -29,10 +34,14 @@ export class TemplatesService {
   }
 }
 
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 @Controller('templates')
 export class TemplatesController {
   constructor(private t: TemplatesService) {}
   @Get() async list() { return { items: (await this.t.list()).map((x) => this.t.public(x)) }; }
-  @Get(':code') async one(@Param('code') code: string) { return this.t.public(await this.t.active(code)); }
+  /** `?version=N`: the version a document was made with, so it is shown exactly as it was signed and printed */
+  @Get(':code') async one(@Param('code') code: string, @Query('version') version?: string) {
+    const v = Number(version);
+    return this.t.public(version && Number.isInteger(v) && v > 0 ? await this.t.byVersion(code, v) : await this.t.active(code));
+  }
 }

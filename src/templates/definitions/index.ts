@@ -1,10 +1,12 @@
 import { CONTRACT, GR06, IM08, TC10 } from './standalone';
 import { MPV03, PA04, PO09, PR01, QC02, QE03 } from './procurement';
-import { PAPER } from './paper';
+import { LEGACY_PAPER, PAPER } from './paper';
+
+export { LEGACY_PAPER };
 import { Field, TemplateDef } from '../types';
 
 /** Bump this when a form's fields or layout change (a version already used by documents is never rewritten). */
-const VERSION = 10;
+const VERSION = 11;
 
 /**
  * Every editable date starts at today's date and can still be changed: top level dates are filled on new drafts

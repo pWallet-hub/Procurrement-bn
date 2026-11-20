@@ -120,25 +120,50 @@ export const CONTRACT: TemplateDef = {
   workflow: { guards_on_submit: ['template_valid'], guards_on_sign: ['frozen_after_sign', 'no_duplicate_signature'], requires_conflict_confirmation: false },
 };
 
-const internal = when('traveller_type', { equals: 'internal_afs_staff' });
-const external = when('traveller_type', { equals: 'external' });
+const internalTraveller = when('traveller_type', { equals: 'internal_afs_staff' });
+const externalTraveller = when('traveller_type', { equals: 'external' });
+const internalFunding = when('funding_source', { equals: 'internal' });
+const externalFunding = when('funding_source', { equals: 'external' });
 
+/**
+ * One request can cover several travellers: the requester lists them under "Travellers" and, at submit, every traveller
+ * gets a clearance of their own (same mission, their own ID, account and function). The requester's signature is the
+ * only one: the clearance is complete as soon as it is submitted. Traveller details are saved and filled in next time.
+ */
 export const TC10: TemplateDef = {
   code: 'TC-10', version: 1, title: 'Travel Clearance',
-  description: 'Completed by an AfS-Rwanda employee travelling on a work mission. The hosting institution stamps the printed clearance on arrival and departure.',
+  description: 'Completed for AfS-Rwanda employees (or external travellers) on a work mission. One request can cover several travellers; each one gets their own clearance. The hosting institution stamps the printed clearance on arrival and departure.',
   schema: { sections: [
-    { key: 'traveller', title: 'Traveller', fields: [
-      f.radio('traveller_type', 'Traveller', ['Internal (AfS staff)', 'External'], { ...req, default: 'internal_afs_staff' }),
-      f.user('issued_to', 'Issued to Mr/Mrs/Ms', { required_if: internal, visible_if: internal, help: 'The staff member travelling. When it is not you, they sign the clearance as the traveller after you submit.' }),
-      f.text('issued_to_name', 'Issued to Mr/Mrs/Ms (full name)', { required_if: external, visible_if: external, maxLength: 120 }),
-      f.radio('id_type', 'ID type', ['Rwanda national ID', 'Passport'], req),
-      f.text('id_number', 'ID', { ...req, maxLength: 30, check: { rule: 'id_document', type_field: 'id_type' }, help: 'Rwanda national ID: 16 digits. Passport: 6 to 9 letters or digits.' }),
-      f.text('account_number', 'Account number', { ...req, hint: 'Enter the bank account number the mission allowance is paid to.' }), f.text('function', 'Function', req),
+    { key: 'travellers', title: 'Travellers', description: 'Add everyone travelling on this mission. Each traveller gets their own clearance, e-mailed to them as a signed PDF. Saved details (ID, account number, function, e-mail) are filled in when you pick someone who travelled before.', fields: [
+      f.table('travellers', 'Travellers', [
+        f.select('traveller_type', 'Traveller', [['internal_afs_staff', 'AfS staff'], ['external', 'External']], { ...req, default: 'internal_afs_staff' }),
+        f.user('staff', 'Staff member', { required_if: internalTraveller, visible_if: internalTraveller }),
+        f.text('name', 'Full name', { required_if: externalTraveller, visible_if: externalTraveller, maxLength: 120 }),
+        f.text('email', 'E-mail', { required_if: externalTraveller, visible_if: externalTraveller, maxLength: 120, check: { rule: 'email' }, help: 'Their signed clearance is e-mailed here. Staff receive it at their account e-mail.' }),
+        f.select('id_type', 'ID type', ['Rwanda national ID', 'Passport'], req),
+        f.text('id_number', 'ID', { ...req, maxLength: 30, check: { rule: 'id_document', type_field: 'id_type' }, help: 'Rwanda national ID: 16 digits. Passport: 6 to 9 letters or digits.' }),
+        f.text('account_number', 'Account number', { ...req, maxLength: 40, hint: 'Enter the bank account number the mission allowance is paid to.' }),
+        f.text('function', 'Function', { ...req, maxLength: 80 }),
+      ], 1, 30, { ...req, widget: 'travellers' }),
+    ] },
+    // the traveller of THIS clearance, taken from the list above by the server; printed on the clearance
+    { key: 'traveller', title: 'Traveller', hidden: true, fields: [
+      f.radio('traveller_type', 'Traveller', ['Internal (AfS staff)', 'External'], { readonly: true }),
+      f.user('issued_to', 'Issued to Mr/Mrs/Ms', { readonly: true }),
+      f.text('issued_to_name', 'Issued to Mr/Mrs/Ms (full name)', { readonly: true }),
+      f.text('traveller_email', 'Traveller e-mail', { readonly: true }),
+      f.radio('id_type', 'ID type', ['Rwanda national ID', 'Passport'], { readonly: true }),
+      f.text('id_number', 'ID', { readonly: true }),
+      f.text('account_number', 'Account number', { readonly: true }),
+      f.text('function', 'Function', { readonly: true }),
     ] },
     { key: 'mission', title: 'Mission', fields: [
-      f.text('program', '5. Program', req), f.budget('funding', '6. Funding (budget line)', req),
+      f.program('program', '5. Program', req),
+      f.radio('funding_source', '6. Funding', [['internal', 'Internal'], ['external', 'External']], { ...req, default: 'internal', help: 'Internal: paid from an AfS-Rwanda budget line, the mission costs are calculated below. External: paid by another organisation, no costs are calculated.' }),
+      f.budget('funding', 'Budget line', { required_if: internalFunding, visible_if: internalFunding }),
+      f.text('external_funder', 'Funded by (organisation)', { required_if: externalFunding, visible_if: externalFunding, maxLength: 120 }),
       f.textarea('expected_results', '7. Expected results', req), f.textarea('purpose', '8. Purpose of the mission', req),
-      f.user('supervisor', '9. Supervisor who proposed the mission', { ...req, help: 'This person confirms the mission after you submit.' }),
+      f.user('supervisor', '9. Supervisor who proposed the mission', { ...req, help: 'Named on the clearance; the supervisor does not sign it.' }),
       f.text('destination', '10. Destination', req),
       f.date('departure_date', '11. Date of departure', req), f.text('departure_place', '11. Place of departure', req),
       f.date('return_date', '12. Returning date', req),
@@ -146,12 +171,12 @@ export const TC10: TemplateDef = {
       f.checks('transport', '14. Means of transport', ['Office vehicle', 'Public transport', 'Hired vehicle', 'Taxi ride', 'Air travel'], { ...req, allow_other: true }),
       f.text('issued_at', 'Issued at', req),
     ] },
-    { key: 'costs', title: 'Mission Costs', description: 'Filled by an administrator only: while creating the clearance, or at the costs step after the supervisor confirms the mission.', fields: [
-      f.money('allowance_per_day', '15. Mission allowance per day', { required: true, fill_at: 'admin_costs' }),
-      f.money('accommodation_per_day', '16. Accommodation & incidental per day', { required: true, fill_at: 'admin_costs' }),
-      f.money('transport_cost', 'Transport cost (whole mission)', { required: true, fill_at: 'admin_costs', help: 'Fares, fuel or vehicle hire for the whole trip, there and back.', hint: 'Enter the total transport cost of the trip. Enter 0 when the office vehicle is used at no extra cost.' }),
-      f.text('transport_details', 'Transport details', { fill_at: 'admin_costs', maxLength: 200, help: 'e.g. bus fare Kigali–Musanze return ×2, fuel for the office vehicle' }),
-      f.computed('total_amount', '17. Total amount', { op: 'add_times', fields: ['allowance_per_day', 'accommodation_per_day'], field: 'duration_days', plus: ['transport_cost'] }, { format: 'money', help: '(15 + 16) × duration + transport', fill_at: 'admin_costs' }),
+    { key: 'costs', title: 'Mission Costs (per traveller)', visible_if: internalFunding, description: 'Internal funding only: the total is calculated as (15 + 16) × duration + transport, for each traveller.', fields: [
+      f.money('allowance_per_day', '15. Mission allowance & incidental per day', { required_if: internalFunding, help: 'Daily mission allowance including incidental expenses.' }),
+      f.money('accommodation_per_day', '16. Accommodation per day', { required_if: internalFunding }),
+      f.money('transport_cost', 'Transport cost (whole mission)', { required_if: internalFunding, help: 'Fares, fuel or vehicle hire for the whole trip, there and back.', hint: 'Enter the total transport cost of the trip. Enter 0 when the office vehicle is used at no extra cost.' }),
+      f.text('transport_details', 'Transport details', { maxLength: 200, help: 'e.g. bus fare Kigali–Musanze return ×2, fuel for the office vehicle' }),
+      f.computed('total_amount', '17. Total amount', { op: 'add_times', fields: ['allowance_per_day', 'accommodation_per_day'], field: 'duration_days', plus: ['transport_cost'] }, { format: 'money', help: '(15 + 16) × duration + transport' }),
     ] },
     { key: 'host_visa', title: 'Visa of Hosting Institution', description: 'Left blank: the hosting institution fills this in by hand and stamps the printed clearance.', fields: [
       f.textarea('host_authorized', 'Authorized Name, Signature & Stamp', { readonly: true }),
@@ -159,11 +184,7 @@ export const TC10: TemplateDef = {
     ] },
   ] },
   signature_slots: [
-    { key: 'traveller', label: 'Traveller (requested by)', role: 'requesting_staff', seq: 1, declaration: 'I request this travel clearance and confirm the details are accurate.', assign: 'requester:issued_to' },
-    { key: 'supervisor', label: 'Supervisor who proposed the mission', role: 'director_dept', seq: 2, declaration: 'I proposed this mission and confirm its purpose.', assign: 'field:supervisor' },
-    { key: 'admin_costs', label: 'Costs entered by (Administrator)', role: 'admin', seq: 3, declaration: 'I entered the mission allowance, accommodation and transport costs (items 15 to 17).', draft_fill: true },
-    { key: 'funding_check', label: 'Funding checked by (Accountant)', role: 'accountant', seq: 4, declaration: 'I checked the funding line and the amounts.' },
-    { key: 'approved_by', label: 'Approved By', role: 'pi', seq: 5, declaration: 'I approve this mission.' },
+    { key: 'approved_by', label: 'Requested & approved by', role: 'requesting_staff', seq: 1, declaration: 'I request and authorize this travel clearance and confirm the details are accurate.', assign: 'creator' },
   ],
   workflow: { guards_on_submit: ['template_valid', 'travel_clearance_valid'], guards_on_sign: ['frozen_after_sign', 'no_duplicate_signature'], requires_conflict_confirmation: false },
 };

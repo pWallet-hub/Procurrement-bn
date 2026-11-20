@@ -34,7 +34,13 @@ export async function prefill(q: Queryable, docType: string, c: CaseCtx | null, 
     // the requester starts as the person filling the form; they change it when they fill it for someone else
     if (docType === 'IM-08') return { originator: actor.id, date_submitted: today(), version: '1.0', department_office: actor.department ?? undefined };
     if (docType === 'GR-06') return { requested_by: actor.id };
-    if (docType === 'TC-10') return { traveller_type: 'internal_afs_staff', issued_to: actor.id, id_type: 'rwanda_national_id', function: actor.position ?? undefined, issued_at: 'Kigali' };
+    if (docType === 'TC-10') {
+      // the requester is the first traveller, with the details saved from their last clearance
+      const p = await staffProfile(q, actor.id);
+      const row = { traveller_type: 'internal_afs_staff', staff: actor.id, id_type: p?.id_type ?? 'rwanda_national_id', id_number: p?.id_number ?? undefined,
+        account_number: p?.account_number ?? undefined, function: p?.function ?? actor.position ?? undefined };
+      return { travellers: [Object.fromEntries(Object.entries(row).filter(([, v]) => v !== undefined))], funding_source: 'internal', issued_at: 'Kigali' };
+    }
     return {};
   }
   const pr = await latest(q, c.id, 'PR-01');
@@ -107,12 +113,7 @@ export async function prefill(q: Queryable, docType: string, c: CaseCtx | null, 
 
 /** Server controlled values re-derived on every save and at submit (controls, case references). */
 export async function deriveAuto(q: Queryable, docType: string, data: Record<string, any>, c: CaseCtx | null): Promise<Record<string, any>> {
-  const out = { ...data };
-  if (docType === 'TC-10') {
-    if (typeof out.id_number === 'string') out.id_number = normalizeIdNumber(out.id_number);
-    // only one of internal staff / external name is kept
-    if (out.traveller_type === 'external') delete out.issued_to; else if (out.traveller_type) delete out.issued_to_name;
-  }
+  const out = docType === 'TC-10' ? travelClearanceAuto(data) : { ...data };
   if (!c) return out;
   if (['QC-02', 'QE-03', 'PA-04', 'PR-01'].includes(docType)) out.request_no = c.request_no;
   if (docType === 'PA-04') {
@@ -126,5 +127,51 @@ export async function deriveAuto(q: Queryable, docType: string, data: Record<str
   }
   if (docType === 'PO-09' && c.approved_amount != null) out.currency = out.currency ?? (c.currency ?? 'RWF').toLowerCase();
   if (docType === 'CONTRACT' && c.approved_amount != null) out.contract_value = { amount: Number(c.approved_amount), currency: c.currency ?? 'RWF' };
+  return out;
+}
+
+const staffProfile = async (q: Queryable, userId: string) =>
+  (await q.query('SELECT id_type, id_number, account_number, function FROM traveller_profiles WHERE user_id = $1 AND active', [userId])).rows[0] as
+    { id_type: string | null; id_number: string | null; account_number: string | null; function: string | null } | undefined;
+
+/** One traveller row with only the fields of its kind kept (staff member or external name) and the ID normalised. */
+export function cleanTraveller(r: Record<string, any>): Record<string, any> {
+  const row = { ...r };
+  if (typeof row.id_number === 'string') row.id_number = normalizeIdNumber(row.id_number);
+  if (typeof row.email === 'string') row.email = row.email.trim().toLowerCase();
+  if (row.traveller_type === 'external') delete row.staff; else { delete row.name; delete row.email; }
+  return row;
+}
+
+/** The printed traveller of a clearance (issued to, ID, account, function) taken from a traveller row. */
+export function travellerFields(row: Record<string, any> | undefined): Record<string, any> {
+  if (!row) return {};
+  const external = row.traveller_type === 'external';
+  return {
+    traveller_type: row.traveller_type, ...(external ? { issued_to_name: row.name, traveller_email: row.email } : { issued_to: row.staff }),
+    id_type: row.id_type, id_number: row.id_number, account_number: row.account_number, function: row.function,
+  };
+}
+
+const TRAVELLER_KEYS = ['traveller_type', 'issued_to', 'issued_to_name', 'traveller_email', 'id_type', 'id_number', 'account_number', 'function'];
+const COST_KEYS = ['allowance_per_day', 'accommodation_per_day', 'transport_cost', 'transport_details', 'total_amount'];
+
+/**
+ * TC-10 values the server controls: traveller rows cleaned, the first traveller printed on the clearance, and only the
+ * funding of the chosen kind kept (an externally funded mission has no budget line and no costs).
+ */
+export function travelClearanceAuto(data: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = { ...data };
+  if (!Array.isArray(out.travellers)) {
+    // drafts of the form before version 11: one traveller entered directly
+    if (typeof out.id_number === 'string') out.id_number = normalizeIdNumber(out.id_number);
+    if (out.traveller_type === 'external') delete out.issued_to; else if (out.traveller_type) delete out.issued_to_name;
+    return out;
+  }
+  for (const k of TRAVELLER_KEYS) delete out[k];
+  out.travellers = out.travellers.map((r: any) => (r && typeof r === 'object' && !Array.isArray(r) ? cleanTraveller(r) : r));
+  Object.assign(out, Object.fromEntries(Object.entries(travellerFields(out.travellers[0])).filter(([, v]) => v !== undefined && v !== null && v !== '')));
+  if (out.funding_source === 'external') { delete out.funding; for (const k of COST_KEYS) delete out[k]; }
+  else if (out.funding_source === 'internal') delete out.external_funder;
   return out;
 }

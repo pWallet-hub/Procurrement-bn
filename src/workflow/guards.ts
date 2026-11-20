@@ -2,6 +2,7 @@ import { Queryable } from '../db/db.service';
 import { guardError, validationError } from '../common/errors';
 import { amt } from '../templates/computed';
 import { validateFull } from '../templates/validate';
+import { travellerProblems } from '../templates/checks';
 import { isSigned } from './stages';
 
 export interface GuardCtx {
@@ -130,10 +131,15 @@ export const GUARDS: Record<string, Guard> = {
     if (amt(data.price_range_low) > amt(data.price_range_high)) throw guardError('price_range_ordered', 'The lowest observed price is above the highest', { price_range_low: 'is above the highest price' }, { price_range_low: 'Enter the lowest price you found as "Lowest" and the highest as "Highest".' });
   },
 
-  /** TC-10: return not before departure; the proposing supervisor is someone other than the traveller */
+  /** TC-10: return not before departure; the proposing supervisor is not a traveller; nobody listed twice */
   travel_clearance_valid: ({ data }) => {
     if (data.return_date && data.departure_date && data.return_date < data.departure_date) throw guardError('travel_clearance_valid', 'The returning date cannot be before the departure date', { return_date: 'is before the departure date' }, { return_date: 'Choose a returning date on or after the departure date.' });
-    if (data.traveller_type !== 'external' && data.supervisor && data.supervisor === data.issued_to) throw guardError('travel_clearance_valid', 'The supervisor who proposed the mission must be someone other than the traveller', { supervisor: 'is the same person as the traveller' }, { supervisor: 'Choose the supervisor who proposed the mission; it cannot be the traveller.' });
+    if (Array.isArray(data.travellers)) {
+      const p = travellerProblems(data)[0];
+      if (p) throw guardError('travel_clearance_valid', `Traveller list: ${p.error}`, { [p.path]: p.error }, { [p.path]: p.hint });
+    } else if (data.traveller_type !== 'external' && data.supervisor && data.supervisor === data.issued_to) {
+      throw guardError('travel_clearance_valid', 'The supervisor who proposed the mission must be someone other than the traveller', { supervisor: 'is the same person as the traveller' }, { supervisor: 'Choose the supervisor who proposed the mission; it cannot be the traveller.' });
+    }
   },
 
   /** Enforced by the data layer (documents.state check), listed so templates stay self documenting */

@@ -4,13 +4,13 @@ import { join } from 'path';
 import { renderPaper } from './paper-pdf';
 import * as QRCode from 'qrcode';
 import { PDFDocument as LibDoc } from 'pdf-lib';
-import { Db } from '../db/db.service';
+import { Db, Queryable } from '../db/db.service';
 import { AuditService } from '../audit/audit.service';
 import { StorageService } from '../attachments/storage.service';
 import { TemplatesService } from '../templates/templates.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { config } from '../config/config';
-import { sha256 } from '../common/hash';
+import { canonical, sha256 } from '../common/hash';
 import { notFound } from '../common/errors';
 import { Field } from '../templates/types';
 
@@ -21,12 +21,13 @@ export class PdfService {
   constructor(private db: Db, private audit: AuditService, private storage: StorageService, private templates: TemplatesService, private notify: NotificationsService) {}
 
   private async lookups() {
-    const [u, s, b, a] = await Promise.all([
+    const [u, s, b, a, p] = await Promise.all([
       this.db.query('SELECT id, full_name FROM users'), this.db.query('SELECT id, name FROM suppliers'),
       this.db.query('SELECT id, code FROM budget_lines'), this.db.query('SELECT id, filename FROM attachments'),
+      this.db.query('SELECT id, name FROM programs'),
     ]);
     const m = (rows: any[], k: string) => new Map<string, string>(rows.map((r) => [r.id, r[k]]));
-    return { user_ref: m(u.rows, 'full_name'), supplier_ref: m(s.rows, 'name'), budget_line_ref: m(b.rows, 'code'), file: m(a.rows, 'filename') };
+    return { user_ref: m(u.rows, 'full_name'), supplier_ref: m(s.rows, 'name'), budget_line_ref: m(b.rows, 'code'), program_ref: m(p.rows, 'name'), file: m(a.rows, 'filename') };
   }
 
   private fmt(f: Field, v: any, lk: Awaited<ReturnType<PdfService['lookups']>>): string {
@@ -36,7 +37,7 @@ export class PdfService {
       case 'yes_no': return v ? 'Yes' : 'No';
       case 'select': case 'radio': return f.options?.find((o) => o.value === v)?.label ?? String(v);
       case 'checkbox_group': return (v as string[]).map((x) => f.options?.find((o) => o.value === x)?.label ?? x).join(', ');
-      case 'user_ref': case 'supplier_ref': case 'budget_line_ref': case 'file': return lk[f.type].get(v) ?? String(v);
+      case 'user_ref': case 'supplier_ref': case 'budget_line_ref': case 'program_ref': case 'file': return lk[f.type].get(v) ?? String(v);
       default: return String(v);
     }
   }
@@ -90,19 +91,61 @@ export class PdfService {
     return done;
   }
 
-  /** Job: stamp and store the PDF of a fully signed document, then archive it. */
+  /** Fingerprint of a form's printed layout: a stored PDF drawn with another layout is drawn again. */
+  static layoutHash(tpl: { schema: any }) { return sha256(canonical(tpl.schema?.paper ?? null)); }
+
+  /**
+   * Job: stamp and store the PDF of a fully signed document, then archive it. Also redraws an archived PDF whose form
+   * layout changed since. One render per document at a time, and the stored file and its recorded hash are written
+   * together, so the "Verify authenticity" check never compares a file with the hash of another render.
+   */
   async renderAndStore(docId: string) {
     const doc = await this.db.one('SELECT * FROM documents WHERE id = $1', [docId]);
     if (!doc || !['signed', 'archived'].includes(doc.state)) return;
-    const body = await this.build(docId);
-    const key = `documents/${docId}/v${doc.version}.pdf`;
-    const hash = sha256(body);
-    await this.storage.put(key, body, 'application/pdf');
+    const layout = PdfService.layoutHash(await this.templates.byId(doc.template_id));
+    if (doc.pdf_object_key && doc.pdf_layout === layout) return;
     await this.db.tx(async (c) => {
-      await c.query("UPDATE documents SET pdf_object_key = $2, pdf_sha256 = $3, state = 'archived', updated_at = now() WHERE id = $1", [docId, key, hash]);
-      await this.audit.log({ action: 'document.archived', objectType: 'document', objectId: docId, caseId: doc.case_id, detail: { pdf_sha256: hash, object_key: key } }, c);
+      await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`pdf:${docId}`]);
+      const cur = (await c.query('SELECT pdf_object_key, pdf_layout FROM documents WHERE id = $1', [docId])).rows[0];
+      if (cur.pdf_object_key && cur.pdf_layout === layout) return; // another render finished first
+      const body = await this.build(docId);
+      // a new file per render: the previous file stays untouched until the new hash is recorded
+      const key = `documents/${docId}/v${doc.version}-${Date.now()}.pdf`;
+      const hash = sha256(body);
+      await this.storage.put(key, body, 'application/pdf');
+      await c.query("UPDATE documents SET pdf_object_key = $2, pdf_sha256 = $3, pdf_layout = $4, state = 'archived', updated_at = now() WHERE id = $1", [docId, key, hash, layout]);
+      await this.audit.log({ action: cur.pdf_object_key ? 'document.pdf_redrawn' : 'document.archived', objectType: 'document', objectId: docId, caseId: doc.case_id, detail: { pdf_sha256: hash, object_key: key } }, c);
+      if (!cur.pdf_object_key && doc.doc_type === 'TC-10') await this.sendClearance(c, doc);
     });
+    await this.notify.flush();
     this.log.log(`archived ${docId}`);
+  }
+
+  /** Travel clearance: the traveller receives their signed clearance by e-mail, PDF attached (staff also in the app). */
+  private async sendClearance(c: Queryable, doc: any) {
+    const d = doc.data ?? {};
+    const staff = d.issued_to ? (await c.query('SELECT id, full_name FROM users WHERE id = $1 AND active', [d.issued_to])).rows[0] : null;
+    const email = staff ? null : d.traveller_email;
+    if (!staff && !email) return; // an external traveller without an e-mail (clearances of earlier versions)
+    const dmy = (v: any) => (typeof v === 'string' ? v.split('-').reverse().join('/') : '');
+    await this.notify.send({
+      userId: staff?.id ?? null, email, kind: 'travel_clearance', subject: `Your travel clearance: ${d.destination ?? 'mission'}`,
+      vars: { signer_name: staff?.full_name ?? d.issued_to_name ?? '', destination: d.destination ?? '', departure_date: dmy(d.departure_date), return_date: dmy(d.return_date),
+        // without an account the button opens the public verification page of the clearance
+        ...(staff ? {} : { link: `${config.appUrl}/verify/${doc.id}` }) },
+      path: staff ? `/documents/${doc.id}` : undefined, inApp: !!staff, attachPdf: doc.id,
+    }, c);
+  }
+
+  /** Archived documents whose stored PDF was drawn with an older layout of their form (at most `limit`). */
+  async staleLayouts(limit = 25): Promise<string[]> {
+    const out: string[] = [];
+    for (const t of (await this.db.query('SELECT id, schema FROM form_templates')).rows) {
+      const r = await this.db.query("SELECT id FROM documents WHERE template_id = $1 AND state = 'archived' AND pdf_layout IS DISTINCT FROM $2 LIMIT $3", [t.id, PdfService.layoutHash(t), limit - out.length]);
+      out.push(...r.rows.map((x) => x.id));
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 
   async forDownload(docId: string): Promise<{ body: Buffer; filename: string }> {

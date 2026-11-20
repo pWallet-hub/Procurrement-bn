@@ -27,7 +27,9 @@ async function main() {
       const { subject, vars } = n.payload;
       const { html, text } = renderEmail(n.kind, subject, vars ?? {});
       try {
-        await mail.send(n.email, subject, html, text);
+        // e.g. the signed travel clearance sent to its traveller
+        const attachments = n.payload.attach_pdf ? [await pdf.forDownload(n.payload.attach_pdf)].map((f) => ({ filename: f.filename, content: f.body })) : undefined;
+        await mail.send(n.email, subject, html, text, attachments);
         await db.query("UPDATE notifications SET status = 'sent', sent_at = now(), error = NULL WHERE id = $1", [n.id]);
       } catch (e: any) {
         await db.query("UPDATE notifications SET status = 'failed', error = $2 WHERE id = $1", [n.id, e.message]);
@@ -53,6 +55,11 @@ async function main() {
     async 'pdf.requeue'() {
       const stuck = await db.query("SELECT id FROM documents WHERE state = 'signed' AND pdf_object_key IS NULL AND updated_at < now() - interval '2 minutes' LIMIT 50");
       for (const d of stuck.rows) await queue.add('pdf.render', { documentId: d.id }, { jobId: `pdf-${d.id}-requeue` });
+    },
+
+    /** archived PDFs drawn with an older layout of their form are drawn again, so the archive matches the current forms */
+    async 'pdf.refresh'() {
+      for (const id of await pdf.staleLayouts(25)) await queue.add('pdf.render', { documentId: id }, { jobId: `pdf-${id}-layout-${Date.now()}` });
     },
 
     /** daily: remind signers whose slot has waited longer than REMINDER_DAYS */
@@ -106,6 +113,7 @@ async function main() {
   const q = queue.queue;
   await q.upsertJobScheduler('email-requeue', { pattern: '* * * * *' }, { name: 'email.requeue' });
   await q.upsertJobScheduler('pdf-requeue', { pattern: '*/5 * * * *' }, { name: 'pdf.requeue' });
+  await q.upsertJobScheduler('pdf-refresh', { pattern: '*/10 * * * *' }, { name: 'pdf.refresh' });
   await q.upsertJobScheduler('daily-reminder', { pattern: '0 7 * * *' }, { name: 'reminder' });
   await q.upsertJobScheduler('daily-expiry', { pattern: '15 7 * * *' }, { name: 'expiry' });
   await q.upsertJobScheduler('daily-token-cleanup', { pattern: '30 2 * * *' }, { name: 'token.cleanup' });

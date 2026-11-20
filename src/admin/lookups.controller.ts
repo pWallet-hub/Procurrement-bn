@@ -4,6 +4,7 @@ import { Db } from '../db/db.service';
 import { AuditService } from '../audit/audit.service';
 import { validationError } from '../common/errors';
 import { BUDGET_ROW, createBudgetLine } from './budget-lines';
+import { createProgram } from './programs';
 
 @Controller('lookups')
 export class LookupsController {
@@ -15,6 +16,25 @@ export class LookupsController {
   }
   @Get('suppliers') async suppliers() { return { items: (await this.db.query('SELECT id, name, tin_or_reg_no, contact_person, phone, email, address FROM suppliers WHERE active ORDER BY name')).rows }; }
   @Get('budget-lines') async budget() { return { items: (await this.db.query(`SELECT ${BUDGET_ROW} FROM budget_lines WHERE active ORDER BY code`)).rows }; }
+  @Get('programs') async programs() { return { items: (await this.db.query('SELECT id, name FROM programs WHERE active ORDER BY name')).rows }; }
+
+  /** Travellers with saved details: every active staff member (details when saved) and the saved external travellers. */
+  @Get('travellers') async travellers() {
+    const r = await this.db.query(
+      `SELECT 'internal_afs_staff' AS traveller_type, u.id AS staff, u.full_name AS name, COALESCE(p.function, u.position) AS function,
+              p.id_type, p.id_number, p.account_number, u.email::text AS email
+         FROM users u LEFT JOIN traveller_profiles p ON p.user_id = u.id AND p.active WHERE u.active
+       UNION ALL
+       SELECT 'external', NULL, full_name, function, id_type, id_number, account_number, email
+         FROM traveller_profiles WHERE user_id IS NULL AND active
+       ORDER BY 3`);
+    return { items: r.rows };
+  }
+
+  /** Administrators add a missing program from the travel clearance */
+  @Post('programs') @Perm('admin.manage')
+  async createProgram(@CurrentUser() u: AuthUser, @Body() b: any) { return createProgram(this.db, this.audit, u, b); }
+
   @Get('departments') async departments() { return { items: (await this.db.query('SELECT id, name FROM departments ORDER BY name')).rows }; }
 
   /** QC-02: the Accountant creates a supplier record when a quoting supplier is new */

@@ -10,7 +10,7 @@ const opts = (list: Opts) => list.map((l) => (Array.isArray(l) ? { value: l[0], 
 export const f = {
   text: mk('text'), textarea: mk('textarea'), date: mk('date'), time: mk('time'), number: mk('number'),
   money: mk('money'), file: mk('file'), yesno: mk('yes_no'), user: mk('user_ref'), supplier: mk('supplier_ref'),
-  budget: mk('budget_line_ref'), caseRef: (key: string, label: string, o: Opt = {}) => mk('case_ref')(key, label, { readonly: true, ...o }),
+  budget: mk('budget_line_ref'), program: mk('program_ref'), caseRef: (key: string, label: string, o: Opt = {}) => mk('case_ref')(key, label, { readonly: true, ...o }),
   select: (key: string, label: string, list: Opts, o: Opt = {}) => mk('select')(key, label, { options: opts(list), ...o }),
   radio: (key: string, label: string, list: Opts, o: Opt = {}) => mk('radio')(key, label, { options: opts(list), ...o }),
   checks: (key: string, label: string, list: Opts, o: Opt = {}) => mk('checkbox_group')(key, label, { options: opts(list), ...o }),

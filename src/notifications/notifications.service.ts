@@ -6,6 +6,8 @@ import { config } from '../config/config';
 export interface SendInput {
   userId?: string | null; email?: string | null; kind: string; subject: string;
   vars?: Record<string, any>; inApp?: boolean; path?: string;
+  /** document id: its stored signed PDF is attached to the e-mail */
+  attachPdf?: string;
 }
 
 @Injectable()
@@ -24,7 +26,7 @@ export class NotificationsService {
     const docId = /^\/documents\/([0-9a-f-]{36})/.exec(i.path ?? '')?.[1] ?? null;
     const r = await q.query(
       `INSERT INTO notifications (user_id, email, kind, payload, channel, status) VALUES ($1,$2,$3,$4,'email','queued') RETURNING id`,
-      [i.userId ?? null, email, i.kind, JSON.stringify({ subject: i.subject, title: i.subject, message: i.subject, document_id: docId, path: i.path ?? null, vars, in_app: i.inApp !== false })],
+      [i.userId ?? null, email, i.kind, JSON.stringify({ subject: i.subject, title: i.subject, message: i.subject, document_id: docId, path: i.path ?? null, vars, in_app: i.inApp !== false, ...(i.attachPdf ? { attach_pdf: i.attachPdf } : {}) })],
     );
     const id = r.rows[0].id as string;
     if (q === (this.db as Queryable)) await this.enqueue(id);

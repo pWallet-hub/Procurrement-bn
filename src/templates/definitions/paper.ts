@@ -1,5 +1,5 @@
 import { PaperMeta } from '../types';
-import { LAYOUTS } from './layouts';
+import { LAYOUTS, TC10_LEGACY } from './layouts';
 
 const ORG = 'ALLIANCE FOR SCIENCE RWANDA (AfS-Rwanda)';
 const GENERIC = 'AfS-Rwanda Procurement System | Controlled Internal Form';
@@ -43,3 +43,11 @@ const META: Record<string, PaperMeta> = {
 export const PAPER: Record<string, PaperMeta> = Object.fromEntries(
   Object.entries(META).map(([code, m]) => [code, LAYOUTS[code] ? { ...m, blocks: LAYOUTS[code] } : m]),
 );
+
+/**
+ * Layout for documents of an older template version whose fields differ from the current form: version < `below` uses
+ * `paper`. Every other older version is printed with the current layout (the layout is outside the document hash).
+ */
+export const LEGACY_PAPER: Record<string, { below: number; paper: PaperMeta }> = {
+  'TC-10': { below: 11, paper: { ...META['TC-10'], blocks: TC10_LEGACY } },
+};

@@ -7,6 +7,8 @@ import { badRequest, notFound, validationError } from '../common/errors';
 import { ROLES } from '../auth/permissions';
 import { TemplatesService } from '../templates/templates.service';
 import { BUDGET_ROW, budgetLineErrors, createBudgetLine } from './budget-lines';
+import { createProgram, updateProgram } from './programs';
+import { idDocumentError, normalizeIdNumber } from '../templates/validate';
 
 const USER_ROW = `u.id, u.email, u.full_name, u.position, u.department_id, u.active, u.totp_enabled, (u.password_hash IS NOT NULL) AS has_password,
   COALESCE((SELECT array_agg(role_code ORDER BY role_code) FROM user_roles WHERE user_id = u.id), '{}') AS roles`;
@@ -118,6 +120,38 @@ export class AdminController {
       [id, b.name ?? null, b.tin_or_reg_no ?? null, b.contact_person ?? null, b.phone ?? null, b.email ?? null, b.address ?? null, b.active ?? null]);
     if (!r) throw notFound('supplier');
     await this.audit.log({ actorId: a.id, action: 'admin.supplier_updated', objectType: 'supplier', objectId: id }); return r;
+  }
+
+  // ----- programs (TC-10) and saved travellers -----
+  @Get('programs') async programs() { return { items: (await this.db.query('SELECT id, name, active FROM programs ORDER BY name')).rows }; }
+  @Post('programs') async addProgram(@CurrentUser() a: AuthUser, @Body() b: any) { return createProgram(this.db, this.audit, a, b); }
+  @Patch('programs/:id') async patchProgram(@CurrentUser() a: AuthUser, @Param('id') id: string, @Body() b: any) { return updateProgram(this.db, this.audit, a, id, b); }
+
+  @Get('travellers') async travellerList() {
+    return { items: (await this.db.query(
+      `SELECT p.id, p.user_id, COALESCE(u.full_name, p.full_name) AS full_name, CASE WHEN p.user_id IS NULL THEN 'external' ELSE 'internal_afs_staff' END AS traveller_type,
+              p.id_type, p.id_number, p.account_number, p.function, COALESCE(u.email::text, p.email) AS email, p.active, p.updated_at
+         FROM traveller_profiles p LEFT JOIN users u ON u.id = p.user_id ORDER BY 3`)).rows };
+  }
+  @Patch('travellers/:id') async patchTraveller(@CurrentUser() a: AuthUser, @Param('id') id: string, @Body() b: any) {
+    const errors: Record<string, string> = {};
+    if (b?.id_type !== undefined && !['rwanda_national_id', 'passport'].includes(b.id_type)) errors.id_type = 'choose Rwanda national ID or Passport';
+    if (b?.id_number !== undefined) {
+      const e = idDocumentError(b.id_type ?? (await this.db.one('SELECT id_type FROM traveller_profiles WHERE id = $1', [id]))?.id_type, String(b.id_number));
+      if (e) errors.id_number = e;
+    }
+    if (b?.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(b.email).trim())) errors.email = 'is not a valid e-mail address';
+    if (Object.keys(errors).length) throw validationError(errors);
+    // the e-mail of a staff traveller is their account e-mail and is not stored here
+    if (b?.email) await this.db.query('UPDATE traveller_profiles SET email = $2 WHERE id = $1 AND user_id IS NULL', [id, String(b.email).trim().toLowerCase()]);
+    const r = await this.db.one(
+      `UPDATE traveller_profiles SET full_name = COALESCE($2, full_name), id_type = COALESCE($3, id_type), id_number = COALESCE($4, id_number),
+         account_number = COALESCE($5, account_number), function = COALESCE($6, function), active = COALESCE($7, active), updated_at = now()
+       WHERE id = $1 RETURNING id`,
+      [id, b?.full_name || null, b?.id_type || null, b?.id_number ? normalizeIdNumber(String(b.id_number)) : null, b?.account_number || null, b?.function || null, b?.active ?? null]);
+    if (!r) throw notFound('traveller');
+    await this.audit.log({ actorId: a.id, action: 'admin.traveller_updated', objectType: 'traveller', objectId: id, detail: { fields: Object.keys(b ?? {}) } });
+    return r;
   }
 
   @Get('templates') async tpls() { return { items: (await this.templates.list()).map((t) => ({ ...this.templates.public(t), active: t.active })) }; }

@@ -1,5 +1,6 @@
 import { applyComputed } from '../src/templates/computed';
 import { draftValidation, idDocumentError, validateData, validateFull, withoutFillAt } from '../src/templates/validate';
+import { travelClearanceAuto } from '../src/documents/prefill';
 import { expandBlocks, fieldMap, inlinePieces, LayoutField, PaperBlock } from '../src/templates/paper-layout';
 import { LAYOUTS } from '../src/templates/definitions/layouts';
 import { canonical, documentHash } from '../src/common/hash';
@@ -113,23 +114,38 @@ describe('templates', () => {
 });
 
 describe('travel clearance (TC-10)', () => {
-  it('total = (allowance + accommodation) per day × duration', () => {
-    const d = applyComputed(tpl('TC-10'), { allowance_per_day: { amount: 20000, currency: 'RWF' }, accommodation_per_day: { amount: 30000, currency: 'RWF' }, duration_days: 3 });
-    expect(d.total_amount).toEqual({ amount: 150000, currency: 'RWF' });
-    const withTransport = applyComputed(tpl('TC-10'), { allowance_per_day: { amount: 20000, currency: 'RWF' }, accommodation_per_day: { amount: 30000, currency: 'RWF' }, transport_cost: { amount: 12000, currency: 'RWF' }, duration_days: 3 });
-    expect(withTransport.total_amount).toEqual({ amount: 162000, currency: 'RWF' });
+  const U1 = '11111111-1111-4111-8111-111111111111', U2 = '22222222-2222-4222-8222-222222222222';
+  const staff = (id: string) => ({ traveller_type: 'internal_afs_staff', staff: id, id_type: 'rwanda_national_id', id_number: '1199080012345678', account_number: '000-1', function: 'Officer' });
+  it('internal funding: total = (allowance & incidental + accommodation) per day × duration + transport', () => {
+    const costs = { funding_source: 'internal', allowance_per_day: { amount: 20000, currency: 'RWF' }, accommodation_per_day: { amount: 30000, currency: 'RWF' }, duration_days: 3 };
+    expect(applyComputed(tpl('TC-10'), costs).total_amount).toEqual({ amount: 150000, currency: 'RWF' });
+    expect(applyComputed(tpl('TC-10'), { ...costs, transport_cost: { amount: 12000, currency: 'RWF' } }).total_amount).toEqual({ amount: 162000, currency: 'RWF' });
   });
-  it('items 15 to 17 belong to the admin step: skipped at submit, required when the admin signs, never set by the requester', () => {
+  it('external funding: no costs and no calculation; the funder is required instead of a budget line', () => {
     const t = tpl('TC-10');
-    expect(t.signature_slots.find((x) => x.key === 'admin_costs')?.role).toBe('admin');
-    const atSubmit = validateData(t, {}, true);
-    expect(atSubmit.allowance_per_day).toBeUndefined();
-    expect(atSubmit.program).toBe('required');
-    expect(validateData(t, {}, true, 'admin_costs').allowance_per_day).toBe('required');
-    expect(withoutFillAt(t, { program: 'p', allowance_per_day: 1, total_amount: 2 })).toEqual({ program: 'p' });
-    // an administrator may fill the costs in the draft (slot admin_costs has draft_fill); only that slot's fields are kept
-    expect(t.signature_slots.filter((x) => x.draft_fill).map((x) => x.key)).toEqual(['admin_costs']);
-    expect(withoutFillAt(t, { program: 'p', transport_cost: 1, total_amount: 2 }, new Set(['admin_costs']))).toEqual({ program: 'p', transport_cost: 1, total_amount: 2 });
+    expect(applyComputed(t, { funding_source: 'external', duration_days: 3 }).total_amount).toBeUndefined();
+    const e = validateData(t, { funding_source: 'external' }, true);
+    expect(e.external_funder).toBe('required');
+    expect(e.funding).toBeUndefined();
+    expect(e.allowance_per_day).toBeUndefined();
+    expect(validateData(t, { funding_source: 'internal' }, true).allowance_per_day).toBe('required');
+    expect(travelClearanceAuto({ travellers: [], funding_source: 'external', funding: 'x', allowance_per_day: 1, total_amount: 2 })).toEqual({ travellers: [], funding_source: 'external' });
+  });
+  it('is signed by its requester only; costs are filled by the requester; the program comes from the list', () => {
+    const t = tpl('TC-10');
+    expect(t.signature_slots).toHaveLength(1);
+    expect(t.signature_slots[0]).toMatchObject({ key: 'approved_by', assign: 'creator' });
+    expect(t.schema.sections.flatMap((s) => s.fields).some((f) => f.fill_at)).toBe(false);
+    expect(t.schema.sections.flatMap((s) => s.fields).find((f) => f.key === 'program')?.type).toBe('program_ref');
+  });
+  it('lists several travellers; the first one is printed; each row is checked', () => {
+    const t = tpl('TC-10');
+    const d = travelClearanceAuto({ travellers: [staff(U1), { traveller_type: 'external', name: 'Jane Doe', staff: U2, id_type: 'passport', id_number: 'pc 123456', account_number: '9', function: 'Guest' }] });
+    expect(d).toMatchObject({ issued_to: U1, id_number: '1199080012345678', function: 'Officer' });
+    expect(d.travellers[1]).toEqual({ traveller_type: 'external', name: 'Jane Doe', id_type: 'passport', id_number: 'PC123456', account_number: '9', function: 'Guest' });
+    expect(validateData(t, { travellers: [{ ...staff(U1), id_type: 'passport', id_number: 'X' }] }, false)['travellers[0].id_number']).toMatch(/passport/);
+    expect(validateData(t, { travellers: [{ traveller_type: 'external' }] }, true)['travellers[0].name']).toBe('required');
+    expect(validateData(t, { travellers: [] }, true).travellers).toMatch(/at least 1/);
   });
   it('validates a Rwanda national ID or a passport number', () => {
     expect(idDocumentError('rwanda_national_id', '1 1990 8 0012345 6 78')).toBeNull();
@@ -141,21 +157,22 @@ describe('travel clearance (TC-10)', () => {
     expect(idDocumentError('passport', 'pc 123456')).toBeNull();
     expect(idDocumentError('passport', 'ABCDEFG')).toMatch(/passport/);
     expect(idDocumentError('passport', 'PC12345678901')).toMatch(/passport/);
-    const t = tpl('TC-10');
-    const base = { traveller_type: 'external', issued_to_name: 'Jane Doe', id_type: 'passport' };
-    expect(validateData(t, { ...base, id_number: 'X' }, false).id_number).toMatch(/passport/);
-    expect(validateData(t, { ...base, id_number: 'PC1234567' }, false).id_number).toBeUndefined();
-    expect(validateData(t, { traveller_type: 'external' }, true).issued_to_name).toBe('required');
-    expect(validateData(t, { traveller_type: 'external' }, true).issued_to).toBeUndefined();
   });
-  it('rejects a return before departure and a supervisor who is the traveller', () => {
+  it('rejects a return before departure, a supervisor who travels, and a traveller listed twice', () => {
     expect(() => GUARDS.travel_clearance_valid({ data: { departure_date: '2026-10-10', return_date: '2026-10-09' } } as any)).toThrow();
+    expect(() => GUARDS.travel_clearance_valid({ data: { travellers: [staff(U1)], supervisor: U1 } } as any)).toThrow();
+    expect(() => GUARDS.travel_clearance_valid({ data: { travellers: [staff(U1), { ...staff(U2), id_number: '1199080012345679' }, staff(U1)], supervisor: U2 } } as any)).toThrow();
+    expect(() => GUARDS.travel_clearance_valid({ data: { departure_date: '2026-10-10', return_date: '2026-10-10', travellers: [staff(U1)], supervisor: U2 } } as any)).not.toThrow();
+    // documents of the form before version 11 (one traveller entered directly)
     expect(() => GUARDS.travel_clearance_valid({ data: { issued_to: 'u1', supervisor: 'u1' } } as any)).toThrow();
-    expect(() => GUARDS.travel_clearance_valid({ data: { departure_date: '2026-10-10', return_date: '2026-10-10', issued_to: 'u1', supervisor: 'u2' } } as any)).not.toThrow();
   });
 });
 
 describe('validation', () => {
+  it('GR-06: the items table is required only when office supplies are requested', () => {
+    expect(validateData(tpl('GR-06'), { request_types: ['per_diems'] }, true).items).toBeUndefined();
+    expect(validateData(tpl('GR-06'), { request_types: ['office_supplies'] }, true).items).toMatch(/at least 1/);
+  });
   it('flags required fields and bad rows only on strict', () => {
     const lax = validateData(tpl('PR-01'), { items: [{ qty: 0 }] }, false);
     expect(lax['items[0].qty']).toMatch(/greater than 0/);

@@ -109,9 +109,32 @@ export const CROSS_CHECKS: Record<string, Check> = {
       }
     }
     out.push(...sameCurrency('transport_cost', [d.allowance_per_day, d.accommodation_per_day, d.transport_cost], 'the mission allowance, accommodation and transport'));
-    if (d.traveller_type !== 'external' && d.supervisor && d.supervisor === d.issued_to) {
+    if (Array.isArray(d.travellers)) out.push(...travellerProblems(d));
+    else if (d.traveller_type !== 'external' && d.supervisor && d.supervisor === d.issued_to) {
       out.push({ path: 'supervisor', error: 'is the same person as the traveller', hint: 'Choose the supervisor who proposed the mission; it cannot be the traveller.' });
     }
     return out;
   },
 };
+
+/** TC-10 traveller list: nobody twice, and the supervisor who proposed the mission is not one of the staff travellers. */
+export function travellerProblems(d: Record<string, any>): CrossProblem[] {
+  const out: CrossProblem[] = [];
+  const seenStaff = new Map<string, number>(), seenId = new Map<string, number>();
+  rows(d.travellers).forEach((r, i) => {
+    const staff = r.traveller_type !== 'external' && typeof r.staff === 'string' && r.staff ? r.staff : null;
+    if (staff && staff === d.supervisor) {
+      out.push({ path: `travellers[${i}].staff`, error: 'is the supervisor who proposed the mission', hint: 'The supervisor cannot be a traveller on this clearance: choose another supervisor, or remove this traveller.' });
+    }
+    if (staff) {
+      if (seenStaff.has(staff)) out.push({ path: `travellers[${i}].staff`, error: `is already traveller ${seenStaff.get(staff)! + 1}`, hint: 'Each person is listed once. Remove this row.' });
+      else seenStaff.set(staff, i);
+    }
+    const id = typeof r.id_number === 'string' && r.id_number ? `${r.id_type}:${r.id_number.replace(/\s+/g, '').toUpperCase()}` : null;
+    if (id) {
+      if (seenId.has(id)) out.push({ path: `travellers[${i}].id_number`, error: `is the same ID as traveller ${seenId.get(id)! + 1}`, hint: 'Each traveller has their own ID. Correct the number or remove the duplicate row.' });
+      else seenId.set(id, i);
+    }
+  });
+  return out;
+}

@@ -2,7 +2,7 @@ import type { PaperBlock } from './paper-layout';
 
 export type FieldType =
   | 'text' | 'textarea' | 'date' | 'time' | 'number' | 'money' | 'select' | 'radio' | 'checkbox_group' | 'yes_no'
-  | 'table' | 'file' | 'user_ref' | 'supplier_ref' | 'budget_line_ref' | 'computed' | 'case_ref';
+  | 'table' | 'file' | 'user_ref' | 'supplier_ref' | 'budget_line_ref' | 'program_ref' | 'computed' | 'case_ref';
 
 export interface Condition { field: string; equals?: any; includes?: string; truthy?: boolean }
 
@@ -29,9 +29,12 @@ export interface Field {
   check?: { rule: 'id_document'; type_field: string } | { rule: 'email' } | { rule: 'phone' };
   /** how to fill the field correctly, shown next to a validation error (a generic hint by type is used otherwise) */
   hint?: string;
+  /** a table drawn by a dedicated editor instead of rows of cells (`travellers`: TC-10 traveller picker with saved details) */
+  widget?: 'travellers';
 }
 
-export interface Section { key: string; title: string; description?: string; fields: Field[]; visible_if?: Condition }
+/** `hidden`: kept in the data, printed on paper, but not shown in the editor (server-derived values, e.g. the TC-10 traveller) */
+export interface Section { key: string; title: string; description?: string; fields: Field[]; visible_if?: Condition; hidden?: boolean }
 
 export interface SlotDef {
   key: string; label: string; role: string; seq: number; group?: string; declaration: string;

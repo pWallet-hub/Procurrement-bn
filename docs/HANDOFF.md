@@ -136,6 +136,30 @@ State when last tested (2026-10-05):
   `draft_fill: true`, so a holder of its role may fill its `fill_at` fields while editing; the server strips them for anyone else)
   or at the costs step. Costs entered in the draft are frozen with the document; the admin still signs the costs step.
 
+- **TC-10 rework and approval rules (version 11).**
+  - One request covers several travellers (`travellers` table, `widget: 'travellers'`). At submit every traveller gets a
+    clearance of their own (same mission, their own ID / account / function), all signed together.
+  - The only signature is the requester's (`approved_by`, `assign: creator`): the clearance is complete at submit.
+    The supervisor is named on the form but does not sign.
+  - Once each clearance's PDF is stored, its traveller is e-mailed the signed PDF as an attachment (`travel_clearance`
+    notification, `attach_pdf`). Staff use their account e-mail and also see it in the app; external travellers give
+    an e-mail on the form, and their button opens the public verification page.
+  - Traveller details are saved in `traveller_profiles` at submit and filled in next time (`GET /lookups/travellers`).
+  - The program is chosen from `programs` (`program_ref`). Admin tabs: Programs, Travellers.
+  - Funding is Internal (budget line + costs, total = (15 + 16) × days + transport) or External (funder name, no costs and
+    no total). Item 15 is now "Mission allowance & incidental per day", item 16 "Accommodation per day".
+  - Versions before 11 keep their own printed layout (`LEGACY_PAPER`).
+  - On every form except TC-10, the requester (case requester, or the person in the first `requesting_staff` box) cannot
+    sign any other box of their own request. Their tasks and notifications leave those boxes out. The document shows
+    `requester_blocked`, and a delegate can be assigned.
+- **Archive looks like the current forms.** The seed applies each form's current paper layout to all its older versions.
+  The document page loads the template version of the document (`GET /templates/:code?version=`). The worker job
+  `pdf.refresh` (every 10 min, 25 at a time) redraws stored PDFs whose layout fingerprint (`documents.pdf_layout`) is
+  outdated. Renders are locked per document and write a new file per render, so the stored file and `pdf_sha256` always
+  match.
+- **Validation fix.** An empty optional table is no longer refused at submit. GR-06 items are only required when
+  "Office supplies" is ticked.
+
 ## 9. Backlog (suggested order)
 
 1. **Production go-live**: variables, DB wipe, redeploy both, rerun e2e + UI journey against live, change the admin password, `TOTP_REQUIRED=true` for approver roles.

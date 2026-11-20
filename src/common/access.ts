@@ -19,6 +19,7 @@ export const caseVisible = (c: string) => `(
 
 export const docVisible = (d: string, c: string) => `(
   $3::boolean OR ${d}.created_by = $1
+  OR (${d}.doc_type = 'TC-10' AND ${d}.data->>'issued_to' = $1::text)
   OR EXISTS (SELECT 1 FROM signature_slots ss WHERE ss.document_id = ${d}.id AND ss.voided_at IS NULL
       AND (ss.assigned_user_id = $1 OR (ss.assigned_user_id IS NULL AND ss.status IN ('pending','waiting') AND ss.role_code = ANY($2::text[]))))
   OR EXISTS (SELECT 1 FROM signature_slots ss JOIN signatures g ON g.slot_id = ss.id WHERE ss.document_id = ${d}.id AND g.signer_user_id = $1)

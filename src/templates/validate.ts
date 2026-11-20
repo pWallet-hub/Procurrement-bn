@@ -1,18 +1,12 @@
-import { Condition, Field, Section, TemplateDef } from './types';
+import { Field, Section, TemplateDef } from './types';
 import { CROSS_CHECKS } from './checks';
+import { cond } from './conditions';
+
+export { cond };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CURRENCIES = ['RWF', 'USD', 'EUR'];
 const blank = (v: any) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
-
-export function cond(c: Condition | undefined, data: Record<string, any>): boolean {
-  if (!c) return true;
-  const v = data[c.field];
-  if (c.equals !== undefined) return v === c.equals;
-  if (c.includes !== undefined) return Array.isArray(v) && v.includes(c.includes);
-  if (c.truthy !== undefined) return !!v === c.truthy;
-  return true;
-}
 
 /** Spaces removed, upper case: how ID / passport numbers are stored and checked */
 export const normalizeIdNumber = (v: string) => v.replace(/\s+/g, '').toUpperCase();
@@ -66,6 +60,7 @@ export function hintFor(f: Field, error?: string): string {
     case 'user_ref': return 'Choose the person from the list.';
     case 'supplier_ref': return 'Choose the supplier from the list. If the supplier is missing, ask an administrator to add it.';
     case 'budget_line_ref': return 'Choose the budget line from the list. If it is missing, ask an administrator to add it.';
+    case 'program_ref': return 'Choose the program from the list. If it is missing, ask an administrator to add it.';
     case 'file': return `Upload the file${f.accept?.length ? ` (${f.accept.map((m) => m.split('/')[1].toUpperCase()).join(', ')})` : ''}.`;
     case 'table': return f.min_rows ? `Use "Add row" until there are at least ${f.min_rows} row(s), then fill in every row.` : 'Fill in every row.';
     default: return '';
@@ -105,7 +100,7 @@ function checkType(f: Field, v: any): string | null {
     }
     case 'yes_no': return typeof v === 'boolean' ? null : 'must be Yes or No';
     case 'file': return typeof v === 'string' && UUID.test(v) ? null : 'file is missing';
-    case 'user_ref': case 'supplier_ref': case 'budget_line_ref':
+    case 'user_ref': case 'supplier_ref': case 'budget_line_ref': case 'program_ref':
       return typeof v === 'string' && UUID.test(v) ? null : 'must be chosen from the list';
     default: return null;
   }
@@ -120,8 +115,8 @@ function checkField(f: Field, v: any, path: string, data: Record<string, any>, s
   if (isAuto(f)) return;
   const required = f.required || (f.required_if && cond(f.required_if, data));
   if (blank(v)) {
-    if (strict && f.type === 'table' && f.min_rows) set(path, `add at least ${f.min_rows} row(s)`);
-    else if (strict && required) set(path, 'required');
+    // an empty table is only a problem when the table is required (GR-06 items: only when "Office supplies" is ticked)
+    if (strict && required) set(path, f.type === 'table' && f.min_rows ? `add at least ${f.min_rows} row(s)` : 'required');
     return;
   }
   if (f.type === 'table') {

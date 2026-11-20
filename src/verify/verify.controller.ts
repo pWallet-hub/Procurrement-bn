@@ -23,11 +23,13 @@ export class VerifyController {
     const hashes = ids.length ? (await this.db.query('SELECT sha256 FROM attachments WHERE id = ANY($1::uuid[])', [ids])).rows.map((r) => r.sha256) : [];
     const contentOk = documentHash(tpl.code, tpl.version, doc.data, hashes) === doc.content_hash;
     let pdfOk = true;
+    let pdfMissing = false;
     if (doc.pdf_object_key) {
-      try { pdfOk = sha256(await this.storage.get(doc.pdf_object_key)) === doc.pdf_sha256; } catch { pdfOk = false; }
+      try { pdfOk = sha256(await this.storage.get(doc.pdf_object_key)) === doc.pdf_sha256; } catch { pdfOk = false; pdfMissing = true; }
     }
     const chain = await this.audit.verifyChain();
-    const failing = !contentOk ? 'content_hash' : !pdfOk ? 'pdf_hash' : !chain.ok ? `audit_event ${chain.failing_id}` : undefined;
+    // codes the verification page turns into sentences
+    const failing = !contentOk ? 'content_hash' : pdfMissing ? 'pdf_unavailable' : !pdfOk ? 'pdf_hash' : !chain.ok ? `audit_event ${chain.failing_id}` : undefined;
     return { ok: contentOk && pdfOk && chain.ok, checks: { content_hash: contentOk, pdf_hash: pdfOk, audit_chain: chain.ok }, ...(failing ? { failing } : {}) };
   }
 }

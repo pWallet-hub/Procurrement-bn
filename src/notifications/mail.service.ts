@@ -4,14 +4,15 @@ import { config } from '../config/config';
 /** Sends all system email through Resend. */
 @Injectable()
 export class MailService {
-  async send(to: string, subject: string, html: string, text: string) {
+  async send(to: string, subject: string, html: string, text: string, attachments?: { filename: string; content: Buffer }[]) {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.mail.resendApiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ from: config.mail.from, to, subject, html, text }),
+      body: JSON.stringify({ from: config.mail.from, to, subject, html, text,
+        ...(attachments?.length ? { attachments: attachments.map((a) => ({ filename: a.filename, content: a.content.toString('base64') })) } : {}) }),
     });
     const result: { id?: string; name?: string; message?: string } = await response.json();
     if (!response.ok) {
@@ -31,6 +32,7 @@ export const EMAIL_TEMPLATES: Record<string, { version: number; button: string; 
   'external_sign': { version: 1, button: 'Review and sign', body: 'Hello {{signer_name}}, AfS-Rwanda asks you to sign {{document_title}}. This link works once and expires.' },
   'returned': { version: 1, button: 'Open the document', body: '{{document_title}} (request {{request_no}}) was returned. Reason: {{reason}}' },
   'completed': { version: 1, button: 'Open the document', body: '{{document_title}} (request {{request_no}}) is fully signed.' },
+  'travel_clearance': { version: 1, button: 'Open the clearance', body: 'Hello {{signer_name}}, your travel clearance for the mission to {{destination}} ({{departure_date}} to {{return_date}}) is issued and signed. The signed clearance is attached: print it and ask the hosting institution to stamp it on arrival and departure.' },
   'followup': { version: 1, button: 'Open the memo', body: 'Hello {{signer_name}}, you were assigned an action on {{document_title}}: {{action}} (due {{due_date}}).' },
   'reminder': { version: 1, button: 'Review and sign', body: 'Reminder: {{document_title}} (request {{request_no}}) still waits for your signature.' },
   'expiry': { version: 1, button: 'Open the case', body: 'Heads up: {{reason}} for request {{request_no}}.' },

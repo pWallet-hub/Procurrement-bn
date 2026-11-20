@@ -17,7 +17,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { QueueService } from '../notifications/queue.service';
 import { StorageService } from '../attachments/storage.service';
 import { config } from '../config/config';
-import { CaseCtx, deriveAuto, loadCaseCtx, prefill } from './prefill';
+import { CaseCtx, deriveAuto, loadCaseCtx, prefill, travelClearanceAuto } from './prefill';
 
 export interface Actor { userId: string | null; name: string; ip: string | null; ua: string | null; user?: AuthUser }
 
@@ -53,9 +53,20 @@ export class DocumentsService {
     return new Set(tpl.signature_slots.filter((s) => s.draft_fill && user.roles.includes(s.role)).map((s) => s.key));
   }
 
-  private eligible(slot: any, user: AuthUser) {
+  /**
+   * `requesterId`: the person who requested the document. They never sign an approval box of their own request
+   * (every box other than "requesting staff"), on every form except the travel clearance, which they sign alone.
+   */
+  private eligible(slot: any, user: AuthUser, docType?: string, requesterId?: string | null) {
     if (slot.status !== 'pending' || slot.external_email) return false;
+    if (requesterId && requesterId === user.id && isApproval(docType, slot)) return false;
     return slot.assigned_user_id ? slot.assigned_user_id === user.id : user.roles.includes(slot.role_code);
+  }
+
+  /** The requester: the case requester, or the person in the document's first "requesting staff" box. */
+  private async requesterOf(q: Queryable, doc: { id: string; case_id: string | null }): Promise<string | null> {
+    if (doc.case_id) return (await q.query('SELECT requested_by FROM cases WHERE id = $1', [doc.case_id])).rows[0]?.requested_by ?? null;
+    return (await q.query("SELECT assigned_user_id FROM signature_slots WHERE document_id = $1 AND voided_at IS NULL AND role_code = 'requesting_staff' ORDER BY seq LIMIT 1", [doc.id])).rows[0]?.assigned_user_id ?? null;
   }
 
   private async slotsOf(q: Queryable, docId: string, includeVoided = false) {
@@ -80,7 +91,11 @@ export class DocumentsService {
     const cs = doc.case_id ? await this.db.one('SELECT request_no FROM cases WHERE id = $1', [doc.case_id]) : null;
     const data = this.mergedData(doc, slots);
     const signedAny = slots.some((s) => s.status === 'signed');
-    const sign = user ? slots.filter((s) => this.eligible(s, user)).map((s) => s.slot_key) : [];
+    const requesterId = await this.requesterOf(this.db, doc);
+    const sign = user ? slots.filter((s) => this.eligible(s, user, doc.doc_type, requesterId)).map((s) => s.slot_key) : [];
+    const ownApproval = user && requesterId === user.id
+      ? slots.filter((s) => s.status === 'pending' && isApproval(doc.doc_type, s) && (s.assigned_user_id ? s.assigned_user_id === user.id : user.roles.includes(s.role_code))).map((s) => s.slot_key)
+      : [];
     const editor = user ? this.canEditDraft(doc, user) : false;
     const out: any = {
       id: doc.id, case_id: doc.case_id, request_no: cs?.request_no ?? null, doc_type: doc.doc_type, title: tpl.title, state: doc.state,
@@ -93,6 +108,8 @@ export class DocumentsService {
         assigned_user: s.assigned_user_id ? { id: s.assigned_user_id, full_name: s.assigned_name } : null,
         signature: s.signed_at ? { signer_name: s.signer_name, signer_position: s.signer_position ?? null, signed_at: s.signed_at, method: s.method, image_url: s.signature_image_key ? `/api/v1/documents/${doc.id}/slots/${s.slot_key}/signature.png` : undefined } : null,
       })),
+      /** boxes this user would sign but may not, because they requested the document */
+      requester_blocked: ownApproval,
       can: {
         edit: editor && doc.state === 'draft', submit: editor && doc.state === 'draft',
         sign, decline: sign, revise: editor && doc.state === 'returned',
@@ -222,7 +239,8 @@ export class DocumentsService {
    * it is not the one requesting), the document is submitted without a signature and the requester is asked to sign first.
    */
   async submit(id: string, user: AuthUser, idem: string | null, signature: any = null, ip: string | null = null, ua: string | null = null) {
-    let signed: any = null;
+    const signed: any[] = [];
+    let issued: string[] | null = null;
     const res = await this.db.tx(async (c) => {
       const doc = await this.loadVisible(c, id, user, true);
       if (await this.idemGet(c, idem, user.id, `submit:${id}`)) return { done: true };
@@ -235,64 +253,108 @@ export class DocumentsService {
       const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(c, doc.doc_type, pickKnown(tpl as any, doc.data), cc)), slotsWithValues(tpl as any, doc.data));
       await runGuards(tpl.workflow.guards_on_submit, { q: c, tpl, doc, data, caseRow, actorId: user.id });
 
-      const fileIds = collectFileIds(tpl as any, data);
-      const hashes = await this.attachmentHashes(c, fileIds);
-      const hash = documentHash(tpl.code, tpl.version, data, hashes);
-      const slotDefs: SlotDef[] = tpl.signature_slots;
-      const minSeq = Math.min(...slotDefs.map((s) => s.seq));
-      const supplierEmail = data.supplier ? (await c.query('SELECT email FROM suppliers WHERE id = $1', [data.supplier])).rows[0]?.email : null;
-      if (slotDefs.some((s) => s.external) && !supplierEmail) throw guardError('supplier_email_required', 'The supplier needs an e-mail address to receive the signing link', { supplier: 'no e-mail on record' });
-
-      // the requester named on the form must be an active account: they receive the first signing task
-      for (const s of slotDefs.filter((x) => x.assign?.startsWith('requester:'))) {
-        const key = s.assign!.slice('requester:'.length);
-        const who = data[key];
-        if (who && !(await c.query('SELECT 1 FROM users WHERE id = $1 AND active', [who])).rowCount) {
-          throw validationError({ [key]: 'this person has no active account' }, { [key]: 'Choose a person who can sign in to the system, or yourself.' });
-        }
+      // TC-10 for several travellers: every traveller gets a clearance of their own, all submitted (and signed) together
+      const rows: any[] = doc.doc_type === 'TC-10' && Array.isArray(data.travellers) ? data.travellers : [];
+      const perTraveller = (row: any) => applyComputed(tpl as any, travelClearanceAuto({ ...data, travellers: [row] }));
+      const batch: { doc: any; data: Record<string, any> }[] = [{ doc, data: rows.length > 1 ? perTraveller(rows[0]) : data }];
+      for (const row of rows.slice(1)) {
+        const d = perTraveller(row);
+        const clone = (await c.query('INSERT INTO documents (case_id, template_id, doc_type, data, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+          [doc.case_id, doc.template_id, doc.doc_type, JSON.stringify(d), doc.created_by])).rows[0];
+        await this.audit.log({ actorId: user.id, action: 'document.created', objectType: 'document', objectId: clone.id, caseId: doc.case_id, detail: { doc_type: doc.doc_type, traveller_of: id } }, c);
+        batch.push({ doc: clone, data: d });
       }
-
-      const created: any[] = [];
-      for (const s of slotDefs) {
-        const assigned = s.assign === 'creator' ? doc.created_by : s.assign === 'case_requester' ? (caseRow?.requested_by ?? doc.created_by)
-          : s.assign?.startsWith('requester:') ? (data[s.assign.slice('requester:'.length)] || doc.created_by)
-          : s.assign?.startsWith('field:') ? (data[s.assign.slice(6)] ?? null) : null;
-        const r = await c.query(
-          `INSERT INTO signature_slots (document_id, slot_key, label, role_code, seq, grp, declaration, assigned_user_id, external_email, status)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-          [id, s.key, s.label, s.role, s.seq, s.group ?? null, s.declaration, assigned, s.external ? supplierEmail : null, s.seq === minSeq ? 'pending' : 'waiting']);
-        created.push(r.rows[0]);
+      if (rows.length) await this.saveTravellers(c, rows);
+      for (const b of batch) {
+        const r = await this.openForSigning(c, b.doc, tpl, b.data, user, caseRow, signature, ip, ua);
+        if (r) signed.push(r);
       }
-      await c.query("UPDATE documents SET state = 'in_signing', data = $2, content_hash = $3, returned_reason = NULL, updated_at = now() WHERE id = $1", [id, JSON.stringify(data), hash]);
-      const requesterSlot = created.find((s) => slotDefs.some((d) => d.key === s.slot_key && d.seq === minSeq && (d.assign === 'creator' || d.assign?.startsWith('requester:'))));
-      await this.audit.log({
-        actorId: user.id, ip: null, action: 'document.submitted', objectType: 'document', objectId: id, caseId: doc.case_id,
-        detail: { content_hash: hash, version: doc.version, ...(requesterSlot && requesterSlot.assigned_user_id !== user.id ? { submitted_for: requesterSlot.assigned_user_id } : {}) },
-      }, c);
-
-      // PR-01 names the requester of the whole case: later "requesting staff" boxes (QC-02, QE-03, PA-04) go to them
-      if (doc.doc_type === 'PR-01' && caseRow && data.requested_by && data.requested_by !== caseRow.requested_by) {
-        await c.query('UPDATE cases SET requested_by = $2 WHERE id = $1', [caseRow.id, data.requested_by]);
-        await this.audit.log({ actorId: user.id, action: 'case.requester_changed', objectType: 'case', objectId: caseRow.id, caseId: caseRow.id, detail: { from: caseRow.requested_by, to: data.requested_by } }, c);
-      }
-
-      // the submitter's own first signature: required when they are the requester, and applied now (it opens the next signatures itself)
-      const own = requesterSlot && requesterSlot.status === 'pending' && requesterSlot.assigned_user_id === user.id ? requesterSlot : undefined;
-      if (own) {
-        if (!signature || typeof signature !== 'object') {
-          throw guardError('signature_required', `Sign the form as "${own.label}" to submit it`, { signature: 'required' });
-        }
-        const submitted = { ...doc, state: 'in_signing', data, content_hash: hash };
-        signed = await this.performSign(c, submitted, own, { userId: user.id, name: user.full_name, ip, ua, user }, { ...signature, content_hash: hash });
-      }
-      for (const s of created.filter((x) => x.status === 'pending' && x.id !== own?.id)) await this.activateSlot(c, { ...doc, data }, tpl, s);
+      if (batch.length > 1) issued = batch.map((b) => b.doc.id);
       await this.idemPut(c, idem, user.id, `submit:${id}`, { done: true });
       return { done: true };
     });
     void res;
-    if (signed) await this.afterSign(signed);
-    else await this.notify.flush();
-    return this.get(id, user);
+    for (const r of signed) await this.afterSign(r);
+    if (!signed.length) await this.notify.flush();
+    const out = await this.get(id, user);
+    return issued ? { ...out, issued_documents: issued } : out;
+  }
+
+  /** Remember each traveller's ID, account and function, so the next clearance fills them in. */
+  private async saveTravellers(c: Queryable, rows: any[]) {
+    for (const r of rows) {
+      if (r.traveller_type === 'external') {
+        if (!r.name || !r.id_number) continue;
+        await c.query(
+          `INSERT INTO traveller_profiles (full_name, id_type, id_number, account_number, function, email) VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (id_type, id_number) WHERE user_id IS NULL DO UPDATE SET full_name = $1, account_number = $4, function = $5, email = COALESCE($6, traveller_profiles.email), active = true, updated_at = now()`,
+          [r.name, r.id_type, r.id_number, r.account_number ?? null, r.function ?? null, r.email ?? null]);
+      } else if (r.staff) {
+        await c.query(
+          `INSERT INTO traveller_profiles (user_id, full_name, id_type, id_number, account_number, function)
+           SELECT id, full_name, $2, $3, $4, $5 FROM users WHERE id = $1
+           ON CONFLICT (user_id) DO UPDATE SET full_name = EXCLUDED.full_name, id_type = $2, id_number = $3, account_number = $4, function = $5, active = true, updated_at = now()`,
+          [r.staff, r.id_type, r.id_number, r.account_number ?? null, r.function ?? null]);
+      }
+    }
+  }
+
+  /** Freeze one submitted document: hash, signature boxes, the submitter's own first signature, notify the next signers. */
+  private async openForSigning(c: PoolClient, doc: any, tpl: TemplateRow, data: Record<string, any>, user: AuthUser, caseRow: any, signature: any, ip: string | null, ua: string | null) {
+    const id = doc.id;
+    let signed: any = null;
+    const fileIds = collectFileIds(tpl as any, data);
+    const hashes = await this.attachmentHashes(c, fileIds);
+    const hash = documentHash(tpl.code, tpl.version, data, hashes);
+    const slotDefs: SlotDef[] = tpl.signature_slots;
+    const minSeq = Math.min(...slotDefs.map((s) => s.seq));
+    const supplierEmail = data.supplier ? (await c.query('SELECT email FROM suppliers WHERE id = $1', [data.supplier])).rows[0]?.email : null;
+    if (slotDefs.some((s) => s.external) && !supplierEmail) throw guardError('supplier_email_required', 'The supplier needs an e-mail address to receive the signing link', { supplier: 'no e-mail on record' });
+
+    // the requester named on the form must be an active account: they receive the first signing task
+    for (const s of slotDefs.filter((x) => x.assign?.startsWith('requester:'))) {
+      const key = s.assign!.slice('requester:'.length);
+      const who = data[key];
+      if (who && !(await c.query('SELECT 1 FROM users WHERE id = $1 AND active', [who])).rowCount) {
+        throw validationError({ [key]: 'this person has no active account' }, { [key]: 'Choose a person who can sign in to the system, or yourself.' });
+      }
+    }
+
+    const created: any[] = [];
+    for (const s of slotDefs) {
+      const assigned = s.assign === 'creator' ? doc.created_by : s.assign === 'case_requester' ? (caseRow?.requested_by ?? doc.created_by)
+        : s.assign?.startsWith('requester:') ? (data[s.assign.slice('requester:'.length)] || doc.created_by)
+        : s.assign?.startsWith('field:') ? (data[s.assign.slice(6)] ?? null) : null;
+      const r = await c.query(
+        `INSERT INTO signature_slots (document_id, slot_key, label, role_code, seq, grp, declaration, assigned_user_id, external_email, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [id, s.key, s.label, s.role, s.seq, s.group ?? null, s.declaration, assigned, s.external ? supplierEmail : null, s.seq === minSeq ? 'pending' : 'waiting']);
+      created.push(r.rows[0]);
+    }
+    await c.query("UPDATE documents SET state = 'in_signing', data = $2, content_hash = $3, returned_reason = NULL, updated_at = now() WHERE id = $1", [id, JSON.stringify(data), hash]);
+    const requesterSlot = created.find((s) => slotDefs.some((d) => d.key === s.slot_key && d.seq === minSeq && (d.assign === 'creator' || d.assign?.startsWith('requester:'))));
+    await this.audit.log({
+      actorId: user.id, ip: null, action: 'document.submitted', objectType: 'document', objectId: id, caseId: doc.case_id,
+      detail: { content_hash: hash, version: doc.version, ...(requesterSlot && requesterSlot.assigned_user_id !== user.id ? { submitted_for: requesterSlot.assigned_user_id } : {}) },
+    }, c);
+
+    // PR-01 names the requester of the whole case: later "requesting staff" boxes (QC-02, QE-03, PA-04) go to them
+    if (doc.doc_type === 'PR-01' && caseRow && data.requested_by && data.requested_by !== caseRow.requested_by) {
+      await c.query('UPDATE cases SET requested_by = $2 WHERE id = $1', [caseRow.id, data.requested_by]);
+      await this.audit.log({ actorId: user.id, action: 'case.requester_changed', objectType: 'case', objectId: caseRow.id, caseId: caseRow.id, detail: { from: caseRow.requested_by, to: data.requested_by } }, c);
+    }
+
+    // the submitter's own first signature: required when they are the requester, and applied now (it opens the next signatures itself)
+    const own = requesterSlot && requesterSlot.status === 'pending' && requesterSlot.assigned_user_id === user.id ? requesterSlot : undefined;
+    if (own) {
+      if (!signature || typeof signature !== 'object') {
+        throw guardError('signature_required', `Sign the form as "${own.label}" to submit it`, { signature: 'required' });
+      }
+      const submitted = { ...doc, state: 'in_signing', data, content_hash: hash };
+      signed = await this.performSign(c, submitted, own, { userId: user.id, name: user.full_name, ip, ua, user }, { ...signature, content_hash: hash });
+    }
+    for (const s of created.filter((x) => x.status === 'pending' && x.id !== own?.id)) await this.activateSlot(c, { ...doc, data }, tpl, s);
+    return signed;
   }
 
   private async attachmentHashes(q: Queryable, ids: string[]) {
@@ -313,9 +375,11 @@ export class DocumentsService {
       await this.notify.send({ email: slot.external_email, kind: 'external_sign', subject: `Please sign: ${title}`, vars: { ...vars, signer_name: slot.external_email, link: `${config.appUrl}/sign/${token}` }, inApp: false }, q);
       return;
     }
-    const people = slot.assigned_user_id
+    const requesterId = isApproval(doc.doc_type, slot) ? await this.requesterOf(q, doc) : null;
+    const people = (slot.assigned_user_id
       ? [{ id: slot.assigned_user_id }]
-      : (await q.query('SELECT u.id FROM users u JOIN user_roles r ON r.user_id = u.id WHERE r.role_code = $1 AND u.active', [slot.role_code])).rows;
+      : (await q.query('SELECT u.id FROM users u JOIN user_roles r ON r.user_id = u.id WHERE r.role_code = $1 AND u.active', [slot.role_code])).rows)
+      .filter((p: { id: string }) => p.id !== requesterId); // the requester does not approve their own request
     for (const p of people) {
       const u = (await q.query('SELECT full_name FROM users WHERE id = $1', [p.id])).rows[0];
       await this.notify.send({ userId: p.id, kind: 'sign_requested', subject: `Signature requested: ${title}`, vars: { ...vars, signer_name: u?.full_name }, path: `/documents/${doc.id}` }, q);
@@ -331,7 +395,11 @@ export class DocumentsService {
       if (cached) return { result: cached, after: {} };
       const slot = (await c.query('SELECT * FROM signature_slots WHERE document_id = $1 AND slot_key = $2 AND voided_at IS NULL FOR UPDATE', [id, slotKey])).rows[0];
       if (!slot) throw notFound('signature slot');
-      if (!this.eligible(slot, user)) {
+      const requesterId = await this.requesterOf(c, doc);
+      if (requesterId === user.id && slot.status === 'pending' && isApproval(doc.doc_type, slot)) {
+        throw guardError('requester_cannot_approve', `You requested this document, so someone else must sign "${slot.label}". Ask the Accountant or an administrator to assign another person to this box.`);
+      }
+      if (!this.eligible(slot, user, doc.doc_type, requesterId)) {
         if (slot.status === 'signed') throw guardError('no_duplicate_signature', 'This slot is already signed');
         throw forbidden(slot.status === 'waiting' ? 'Earlier signatures are still missing' : 'This signature slot is not yours to sign');
       }
@@ -457,7 +525,9 @@ export class DocumentsService {
   private async notifyCompleted(c: Queryable, doc: any, tpl: TemplateRow) {
     const people = (await c.query(
       `SELECT DISTINCT u.id, u.full_name FROM users u WHERE u.id = $1 OR u.id IN (
-         SELECT g.signer_user_id FROM signatures g JOIN signature_slots s ON s.id = g.slot_id WHERE s.document_id = $2 AND g.signer_user_id IS NOT NULL)`, [doc.created_by, doc.id])).rows;
+         SELECT g.signer_user_id FROM signatures g JOIN signature_slots s ON s.id = g.slot_id WHERE s.document_id = $2 AND g.signer_user_id IS NOT NULL)`,
+      // travellers on a travel clearance get their signed PDF by e-mail once it is drawn (PdfService.sendClearance)
+      [doc.created_by, doc.id])).rows;
     const cs = doc.case_id ? (await c.query('SELECT request_no FROM cases WHERE id = $1', [doc.case_id])).rows[0] : null;
     for (const p of people) {
       await this.notify.send({ userId: p.id, kind: 'completed', subject: `Fully signed: ${tpl.title}`, vars: { document_title: tpl.title, request_no: cs?.request_no ?? '', signer_name: p.full_name }, path: `/documents/${doc.id}` }, c);
@@ -522,7 +592,7 @@ export class DocumentsService {
     await this.db.tx(async (c) => {
       const doc = await this.loadVisible(c, id, user, true);
       const slot = (await c.query('SELECT * FROM signature_slots WHERE document_id = $1 AND slot_key = $2 AND voided_at IS NULL', [id, slotKey])).rows[0];
-      if (!slot || doc.state !== 'in_signing' || !this.eligible(slot, user)) throw forbidden('You cannot decline this slot');
+      if (!slot || doc.state !== 'in_signing' || !this.eligible(slot, user, doc.doc_type, await this.requesterOf(c, doc))) throw forbidden('You cannot decline this slot');
       await c.query("UPDATE signature_slots SET status = 'declined' WHERE id = $1", [slot.id]);
       await this.returnDoc(c, doc, await this.templates.byId(doc.template_id), user, reason.trim(), 'document.declined', slotKey);
     });
@@ -580,6 +650,9 @@ export class DocumentsService {
       if (!target) throw notFound('user');
       const slot = (await c.query("SELECT * FROM signature_slots WHERE document_id = $1 AND slot_key = $2 AND voided_at IS NULL AND status IN ('pending','waiting')", [id, slotKey])).rows[0];
       if (!slot || slot.external_email) throw notFound('open signature slot');
+      if (isApproval(doc.doc_type, slot) && (await this.requesterOf(c, doc)) === userId) {
+        throw guardError('requester_cannot_approve', 'This person requested the document and cannot sign its approval boxes. Choose someone else.');
+      }
       await c.query('UPDATE signature_slots SET assigned_user_id = $2 WHERE id = $1', [slot.id, userId]);
       await this.audit.log({ actorId: user.id, action: 'document.slot_assigned', objectType: 'document', objectId: id, caseId: doc.case_id, detail: { slot_key: slotKey, user_id: userId } }, c);
       if (slot.status === 'pending') await this.activateSlot(c, doc, await this.templates.byId(doc.template_id), { ...slot, assigned_user_id: userId });
@@ -595,7 +668,11 @@ export class DocumentsService {
       `SELECT d.id AS document_id, d.case_id, c.request_no, d.doc_type, t.title, s.slot_key, s.label, d.updated_at AS created_at
        FROM signature_slots s JOIN documents d ON d.id = s.document_id JOIN form_templates t ON t.id = d.template_id LEFT JOIN cases c ON c.id = d.case_id
        WHERE s.status = 'pending' AND s.voided_at IS NULL AND s.external_email IS NULL AND d.state = 'in_signing'
-         AND (s.assigned_user_id = $1 OR (s.assigned_user_id IS NULL AND s.role_code = ANY($2::text[]))) ORDER BY d.updated_at`, [user.id, user.roles]);
+         AND (s.assigned_user_id = $1 OR (s.assigned_user_id IS NULL AND s.role_code = ANY($2::text[])))
+         -- the requester does not approve their own request (every form but the travel clearance)
+         AND NOT (d.doc_type <> 'TC-10' AND s.role_code <> 'requesting_staff' AND $1 = COALESCE(c.requested_by,
+               (SELECT r.assigned_user_id FROM signature_slots r WHERE r.document_id = d.id AND r.voided_at IS NULL AND r.role_code = 'requesting_staff' ORDER BY r.seq LIMIT 1)))
+         ORDER BY d.updated_at`, [user.id, user.roles]);
     return { items: r.rows };
   }
 
@@ -616,5 +693,9 @@ export class DocumentsService {
     if (!key) return;
     await c.query('INSERT INTO idempotency_keys (key, user_id, route, response) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [key, userId, route, JSON.stringify(response)]);
   }
+}
+/** Approval boxes: everything but the requester's own boxes and external signers. The travel clearance has none. */
+function isApproval(docType: string | undefined, slot: { role_code: string; external_email?: string | null }) {
+  return docType !== 'TC-10' && slot.role_code !== 'requesting_staff' && !slot.external_email;
 }
 export { isSigned };
