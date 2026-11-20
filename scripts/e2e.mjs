@@ -339,8 +339,14 @@ let tcA = must(await call('POST', '/documents', T.admin, { doc_type: 'TC-10', da
 ok(tcA.data.transport_cost?.amount === 12_000 && tcA.data.total_amount?.amount === 162_000, 'admin draft keeps the costs; total = (15 + 16) x days + transport');
 tcA = must(await call('PATCH', `/documents/${tcA.id}`, T.admin, { data: { transport_cost: money(10_000) } }), 200, 'admin changes the transport cost in the draft');
 ok(tcA.data.total_amount?.amount === 160_000, 'total follows the transport cost while editing');
-tcA = must(await submitSigned(tcA.id, T.admin), 201, 'admin signs as the requester & submits the TC-10');
+// the admin filled the clearance for the staff member: the traveller named on the form signs, not the admin
+tcA = must(await call('POST', `/documents/${tcA.id}/submit`, T.admin), 201, 'admin submits the TC-10 filled for the traveller, without signing it');
 ok(tcA.data.transport_cost?.amount === 10_000 && tcA.data.total_amount?.amount === 160_000, 'costs entered by the admin are frozen with the clearance');
+const travSlot = tcA.slots.find((s) => s.slot_key === 'traveller');
+ok(travSlot.status === 'pending' && travSlot.assigned_user?.id === me.id && !travSlot.signature, 'the traveller named on the form is asked to sign first');
+ok((await call('GET', '/signing/tasks', T.staff)).items.some((t) => t.document_id === tcA.id && t.slot_key === 'traveller'), 'and sees it in their signing tasks');
+must(await sign(tcA.id, 'traveller', T.admin, tcA), 403, 'the admin who filled it cannot sign as the traveller');
+must(await sign(tcA.id, 'traveller', T.staff, tcA), 201, 'the traveller signs their clearance');
 must(await sign(tcA.id, 'supervisor', dirDept, tcA), 201, 'supervisor signs the admin-created clearance');
 must(await sign(tcA.id, 'admin_costs', T.admin, tcA), 201, 'admin confirms the costs at the costs step without retyping them');
 ok((await getDoc(tcA.id, T.admin)).data.total_amount?.amount === 160_000, 'total unchanged after the costs step');
@@ -353,6 +359,54 @@ ok(extBad.http === 422 && /passport/.test(extBad.error.fields.id_number ?? ''), 
 must(await call('PATCH', `/documents/${ext.id}`, T.staff, { data: { id_number: 'pc 1234567' } }), 200, 'fix the passport number');
 ext = must(await submitSigned(ext.id, T.staff), 201, 'external TC-10: requester signs & submits');
 ok(ext.data.id_number === 'PC1234567', 'passport stored in upper case without spaces');
+
+console.log('\n== filled by one person, requested (and signed) by another');
+const supMe = await call('GET', '/me', T.superior);
+const commsMe = await call('GET', '/me', T['director.comms']);
+let gr = must(await call('POST', '/documents', T.staff, { doc_type: 'GR-06' }), 201, 'staff creates a GR-06');
+ok(gr.data.requested_by === me.id, 'the requester starts as the person filling the form');
+ok(gr.data.departure_date === undefined, 'a date shown only for travel requests is not filled for other requests');
+gr = must(await call('PATCH', `/documents/${gr.id}`, T.staff, { data: {
+  requested_by: supMe.id, project_activity: 'Partner meeting', budget_line: bl.id, purpose_justification: 'Per diems for the meeting',
+  request_types: ['per_diems'], estimated_total: money(40_000), items: [{ description: 'Per diem', qty: 2, unit_cost: money(20_000) }] } }), 200, 'staff fills the GR-06 for the superior');
+gr = must(await call('POST', `/documents/${gr.id}/submit`, T.staff), 201, 'submitted without a signature: the filler is not the requester');
+const grPrep = gr.slots.find((s) => s.slot_key === 'prepared_by');
+ok(grPrep.status === 'pending' && grPrep.assigned_user?.id === supMe.id && !grPrep.signature, 'Requested / Prepared by waits for the person named as requester');
+ok(gr.slots.find((s) => s.slot_key === 'accountant_budget_check').status === 'waiting', 'the accountant waits for the requester');
+must(await sign(gr.id, 'prepared_by', T.staff, gr), 403, 'the filler cannot sign in the requester\'s place');
+must(await sign(gr.id, 'prepared_by', T.superior, gr), 201, 'the requester signs');
+ok((await getDoc(gr.id, T.staff)).slots.find((s) => s.slot_key === 'accountant_budget_check').status === 'pending', 'then the accountant is asked');
+let grOwn = must(await call('POST', '/documents', T.staff, { doc_type: 'GR-06', data: { project_activity: 'x', budget_line: bl.id, purpose_justification: 'y', request_types: ['per_diems'], estimated_total: money(40_000), items: [{ description: 'Per diem', qty: 2, unit_cost: money(20_000) }] } }), 201, 'GR-06 the filler requests themselves');
+ok((await call('POST', `/documents/${grOwn.id}/submit`, T.staff)).error?.code === 'guard.signature_required', 'when the filler is the requester, they still sign at submit');
+
+const forCase = must(await call('POST', '/cases', T.staff, { project: 'Bought for the Director', budget_line_id: bl.id }), 201, 'staff opens a case for someone else');
+let prFor = await getDoc(forCase.documents[0].id, T.staff);
+ok(prFor.data.required_by_date === today && prFor.data.date_of_request === today, 'PR-01 dates start at today');
+prFor = must(await call('PATCH', `/documents/${prFor.id}`, T.staff, { data: { requested_by: commsMe.id, items: [{ description: 'Camera', qty: 1, unit_cost: money(500000), est_unit_cost: money(500000) }], business_justification: 'Event coverage', required_by_date: '2026-12-15' } }), 200, 'PR-01 names the Director of Communications as requester');
+ok(prFor.data.required_by_date === '2026-12-15', 'a prefilled date can be changed');
+prFor = must(await call('POST', `/documents/${prFor.id}/submit`, T.staff), 201, 'PR-01 submitted for the requester');
+ok(prFor.slots.find((s) => s.slot_key === 'prepared_by').assigned_user?.id === commsMe.id, 'Prepared / Requested by goes to the named requester');
+ok((await call('GET', `/cases/${forCase.id}`, T.staff)).requested_by.id === commsMe.id, 'the case requester follows the PR-01 (later requesting-staff boxes go to them)');
+
+console.log('\n== dates start at today and can be edited');
+const tcNew = must(await call('POST', '/documents', T.staff, { doc_type: 'TC-10' }), 201, 'new TC-10');
+ok(tcNew.data.departure_date === today && tcNew.data.return_date === today, 'TC-10 departure and return dates start at today');
+let memoD = must(await call('POST', '/documents', T.staff, { doc_type: 'IM-08' }), 201, 'new IM-08');
+ok(memoD.data.date_submitted === today && memoD.data.originator === me.id, 'IM-08 date submitted is today and the originator is the filler');
+memoD = must(await call('PATCH', `/documents/${memoD.id}`, T.staff, { data: { date_submitted: '2026-11-01' } }), 200, 'edit the IM-08 date');
+ok(memoD.data.date_submitted === '2026-11-01', 'IM-08 date submitted is editable');
+const tplGr = await call('GET', '/templates/GR-06', T.staff);
+ok(tplGr.signature_slots.find((s) => s.key === 'director_activity_review').label.startsWith('Manager of Department'), 'GR-06 reviewer box is titled Manager of Department');
+ok(tplGr.schema.sections.flatMap((x) => x.fields).find((f) => f.key === 'departure_date').default === 'today', 'every editable date advertises default "today"');
+
+console.log('\n== archive of completed documents');
+const arch = must(await call('GET', '/documents?state=signed,archived&limit=100', T.admin), 200, 'list completed documents');
+ok(arch.items.length > 0 && arch.items.every((d) => d.state === 'signed' || d.state === 'archived'), 'only completed documents are listed');
+ok(arch.items.some((d) => d.id === tc.id), 'a fully signed travel clearance is in the archive');
+const archTyped = must(await call('GET', '/documents?state=signed,archived&doc_type=TC-10,IM-08&limit=100', T.admin), 200, 'filter by several kinds');
+ok(archTyped.items.length > 0 && archTyped.items.every((d) => ['TC-10', 'IM-08'].includes(d.doc_type)), 'only the chosen kinds are listed');
+const archQ = must(await call('GET', `/documents?state=signed,archived&q=${encodeURIComponent(created.request_no)}`, T.staff), 200, 'search the archive by request number');
+ok(archQ.items.some((d) => d.request_no === created.request_no) && archQ.items.every((d) => d.state === 'signed' || d.state === 'archived'), 'search finds the completed case documents');
 
 if (failures.length) { console.log(`\n${passed} passed, ${failures.length} FAILED:`); failures.forEach((f) => console.log(' -', f)); process.exit(1); }
 console.log(`\nALL GOOD: ${passed} checks passed`);

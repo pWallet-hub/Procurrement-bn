@@ -112,17 +112,30 @@ export class DocumentsService {
     return this.dto(doc, user, validation);
   }
 
-  async list(user: AuthUser, f: { doc_type?: string; state?: string; mine?: boolean; limit?: number; cursor?: string }) {
+  /**
+   * Documents visible to the user, newest first. `doc_type` and `state` take one value or a comma separated list
+   * (the archive asks for `state=signed,archived`); `q` searches the request number, form code, title and the form's text.
+   */
+  async list(user: AuthUser, f: { doc_type?: string; state?: string; mine?: boolean; q?: string; limit?: number; cursor?: string }) {
     const limit = Math.min(f.limit ?? 25, 100);
     const offset = f.cursor ? Number(Buffer.from(f.cursor, 'base64').toString()) || 0 : 0;
     const where: string[] = [docVisible('d', 'c')];
     const params: any[] = [...accessParams(user)];
-    if (f.doc_type) { params.push(f.doc_type); where.push(`d.doc_type = $${params.length}`); }
-    if (f.state) { params.push(f.state); where.push(`d.state = $${params.length}`); }
+    const many = (v?: string) => (v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (many(f.doc_type).length) { params.push(many(f.doc_type)); where.push(`d.doc_type = ANY($${params.length}::text[])`); }
+    if (many(f.state).length) { params.push(many(f.state)); where.push(`d.state = ANY($${params.length}::text[])`); }
     if (f.mine) where.push('d.created_by = $1');
+    const q = String(f.q ?? '').trim().slice(0, 100);
+    if (q) {
+      params.push(`%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+      const p = `$${params.length}`;
+      where.push(`(c.request_no ILIKE ${p} OR d.doc_type ILIKE ${p} OR t.title ILIKE ${p} OR d.data::text ILIKE ${p}
+        OR EXISTS (SELECT 1 FROM users cu WHERE cu.id = d.created_by AND cu.full_name ILIKE ${p}))`);
+    }
     params.push(limit + 1, offset);
     const rows = (await this.db.query(
-      `SELECT d.* FROM documents d LEFT JOIN cases c ON c.id = d.case_id WHERE ${where.join(' AND ')} ORDER BY d.updated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params)).rows;
+      `SELECT d.* FROM documents d LEFT JOIN cases c ON c.id = d.case_id JOIN form_templates t ON t.id = d.template_id
+       WHERE ${where.join(' AND ')} ORDER BY d.updated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params)).rows;
     const items = [];
     for (const d of rows.slice(0, limit)) items.push(await this.dto(d, user));
     return { items, next_cursor: rows.length > limit ? Buffer.from(String(offset + limit)).toString('base64') : null };
@@ -136,11 +149,15 @@ export class DocumentsService {
     const c = caseId ? await loadCaseCtx(q, caseId) : null;
     const dep = user.department_id ? (await q.query('SELECT name FROM departments WHERE id = $1', [user.department_id])).rows[0]?.name : null;
     const pre = await prefill(q, docType, c, { id: user.id, department: dep, position: user.position });
-    // date fields marked default:"today" start with the creation date (the person can still change it)
+    // date fields marked default:"today" start with the creation date (the person can still change it). Dates shown only
+    // under a condition, or filled at a later signature, are filled by the form when they appear instead.
     const todayStr = new Date().toISOString().slice(0, 10);
-    const dateDefaults = Object.fromEntries(tpl.schema.sections.flatMap((sec: any) => sec.fields).filter((f: any) => f.type === 'date' && f.default === 'today').map((f: any) => [f.key, todayStr]));
+    const dateDefaults = Object.fromEntries(tpl.schema.sections.filter((sec: any) => !sec.visible_if).flatMap((sec: any) => sec.fields)
+      .filter((f: any) => f.type === 'date' && f.default === 'today' && !f.visible_if && !f.fill_at).map((f: any) => [f.key, todayStr]));
     const fillable = this.draftFillSlots(tpl, user);
-    const merged = pickKnown(tpl as any, { ...dateDefaults, ...pre, ...withoutFillAt(tpl, initial, fillable) });
+    // an empty value from the case or the caller does not wipe the default
+    const given = (o: Record<string, any>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
+    const merged = pickKnown(tpl as any, { ...dateDefaults, ...given(pre), ...given(withoutFillAt(tpl, initial, fillable)) });
     const data = withoutFillAt(tpl, applyComputed(tpl as any, await deriveAuto(q, docType, merged, c)), fillable);
     const doc = (await q.query(
       `INSERT INTO documents (case_id, template_id, doc_type, data, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
@@ -198,9 +215,11 @@ export class DocumentsService {
   // ---------- submit ----------
 
   /**
-   * Submit a draft for signing. The creator's own first signature (Prepared / Requested by, Originating Staff, Traveller:
-   * slots with assign 'creator' in the first sequence) is part of submitting: `signature` must be given and is applied
-   * in the same transaction, so a request never goes out without its requester's signature.
+   * Submit a draft for signing. The requester's first signature (Prepared / Requested by, Originating Staff, Traveller:
+   * slots assigned to the creator or to the requester named on the form, in the first sequence) is part of submitting
+   * when the submitter IS that requester: `signature` must be given and is applied in the same transaction, so a request
+   * never goes out without its requester's signature. When the form names someone else as requester (the person filling
+   * it is not the one requesting), the document is submitted without a signature and the requester is asked to sign first.
    */
   async submit(id: string, user: AuthUser, idem: string | null, signature: any = null, ip: string | null = null, ua: string | null = null) {
     let signed: any = null;
@@ -224,9 +243,19 @@ export class DocumentsService {
       const supplierEmail = data.supplier ? (await c.query('SELECT email FROM suppliers WHERE id = $1', [data.supplier])).rows[0]?.email : null;
       if (slotDefs.some((s) => s.external) && !supplierEmail) throw guardError('supplier_email_required', 'The supplier needs an e-mail address to receive the signing link', { supplier: 'no e-mail on record' });
 
+      // the requester named on the form must be an active account: they receive the first signing task
+      for (const s of slotDefs.filter((x) => x.assign?.startsWith('requester:'))) {
+        const key = s.assign!.slice('requester:'.length);
+        const who = data[key];
+        if (who && !(await c.query('SELECT 1 FROM users WHERE id = $1 AND active', [who])).rowCount) {
+          throw validationError({ [key]: 'this person has no active account' }, { [key]: 'Choose a person who can sign in to the system, or yourself.' });
+        }
+      }
+
       const created: any[] = [];
       for (const s of slotDefs) {
         const assigned = s.assign === 'creator' ? doc.created_by : s.assign === 'case_requester' ? (caseRow?.requested_by ?? doc.created_by)
+          : s.assign?.startsWith('requester:') ? (data[s.assign.slice('requester:'.length)] || doc.created_by)
           : s.assign?.startsWith('field:') ? (data[s.assign.slice(6)] ?? null) : null;
         const r = await c.query(
           `INSERT INTO signature_slots (document_id, slot_key, label, role_code, seq, grp, declaration, assigned_user_id, external_email, status)
@@ -235,11 +264,20 @@ export class DocumentsService {
         created.push(r.rows[0]);
       }
       await c.query("UPDATE documents SET state = 'in_signing', data = $2, content_hash = $3, returned_reason = NULL, updated_at = now() WHERE id = $1", [id, JSON.stringify(data), hash]);
-      await this.audit.log({ actorId: user.id, ip: null, action: 'document.submitted', objectType: 'document', objectId: id, caseId: doc.case_id, detail: { content_hash: hash, version: doc.version } }, c);
+      const requesterSlot = created.find((s) => slotDefs.some((d) => d.key === s.slot_key && d.seq === minSeq && (d.assign === 'creator' || d.assign?.startsWith('requester:'))));
+      await this.audit.log({
+        actorId: user.id, ip: null, action: 'document.submitted', objectType: 'document', objectId: id, caseId: doc.case_id,
+        detail: { content_hash: hash, version: doc.version, ...(requesterSlot && requesterSlot.assigned_user_id !== user.id ? { submitted_for: requesterSlot.assigned_user_id } : {}) },
+      }, c);
 
-      // the submitter's own first signature: required, and applied now (it opens the next signatures itself)
-      const ownKeys = new Set(slotDefs.filter((s) => s.assign === 'creator' && s.seq === minSeq).map((s) => s.key));
-      const own = created.find((s) => ownKeys.has(s.slot_key) && s.status === 'pending' && s.assigned_user_id === user.id);
+      // PR-01 names the requester of the whole case: later "requesting staff" boxes (QC-02, QE-03, PA-04) go to them
+      if (doc.doc_type === 'PR-01' && caseRow && data.requested_by && data.requested_by !== caseRow.requested_by) {
+        await c.query('UPDATE cases SET requested_by = $2 WHERE id = $1', [caseRow.id, data.requested_by]);
+        await this.audit.log({ actorId: user.id, action: 'case.requester_changed', objectType: 'case', objectId: caseRow.id, caseId: caseRow.id, detail: { from: caseRow.requested_by, to: data.requested_by } }, c);
+      }
+
+      // the submitter's own first signature: required when they are the requester, and applied now (it opens the next signatures itself)
+      const own = requesterSlot && requesterSlot.status === 'pending' && requesterSlot.assigned_user_id === user.id ? requesterSlot : undefined;
       if (own) {
         if (!signature || typeof signature !== 'object') {
           throw guardError('signature_required', `Sign the form as "${own.label}" to submit it`, { signature: 'required' });

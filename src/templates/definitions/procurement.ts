@@ -10,7 +10,7 @@ export const PR01: TemplateDef = {
     { key: 'request', title: 'Request', fields: [
       f.text('request_no', 'Request No.', { readonly: true, help: 'Generated when the case is created' }),
       f.date('date_of_request', 'Date of Request', { ...req, default: 'today' }),
-      f.user('requested_by', 'Requested By', req),
+      f.user('requested_by', 'Requested By', { ...req, help: 'The person requesting the purchase. Change it when you fill the form for someone else: they sign "Prepared / Requested by" after you submit.' }),
       f.text('project_activity', 'Project / Activity', { ...req, maxLength: 200 }),
       f.date('required_by_date', 'Required By Date', { ...req, hint: 'Pick the date by which the goods or service are needed (on or after the date of request).' }),
       f.budget('budget_line', 'Budget Line / Cost Centre', req),
@@ -31,7 +31,7 @@ export const PR01: TemplateDef = {
     ] },
   ] },
   signature_slots: [
-    slot('prepared_by', 'Prepared / Requested by', 'requesting_staff', 1, 'I confirm this requisition is accurate and needed for the activity named above.', { assign: 'creator' }),
+    slot('prepared_by', 'Prepared / Requested by', 'requesting_staff', 1, 'I confirm this requisition is accurate and needed for the activity named above.', { assign: 'requester:requested_by' }),
     slot('received_checked', 'Received & Checked by Accountant', 'accountant', 2, 'I have checked the request and the budget line.'),
     slot('pi_initial', 'PI Initial Authorization', 'pi', 3, 'I authorize this requisition to proceed to quotation collection.'),
   ],

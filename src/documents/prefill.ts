@@ -31,7 +31,9 @@ const supplierOf = async (q: Queryable, id: string | null) =>
 /** Values copied from the case and earlier documents when a draft is created (spec section 5: `case.*`, copied not retyped). */
 export async function prefill(q: Queryable, docType: string, c: CaseCtx | null, actor: { id: string; department?: string | null; position?: string | null }): Promise<Record<string, any>> {
   if (!c) {
-    if (docType === 'IM-08') return { date_submitted: today(), version: '1.0', department_office: actor.department ?? undefined };
+    // the requester starts as the person filling the form; they change it when they fill it for someone else
+    if (docType === 'IM-08') return { originator: actor.id, date_submitted: today(), version: '1.0', department_office: actor.department ?? undefined };
+    if (docType === 'GR-06') return { requested_by: actor.id };
     if (docType === 'TC-10') return { traveller_type: 'internal_afs_staff', issued_to: actor.id, id_type: 'rwanda_national_id', function: actor.position ?? undefined, issued_at: 'Kigali' };
     return {};
   }

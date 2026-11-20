@@ -14,7 +14,7 @@ export class DocumentsController {
 
   @Post('documents') create(@CurrentUser() u: AuthUser, @Body() b: any) { return this.docs.createStandalone(u, String(b?.doc_type), b?.data); }
   @Get('documents') list(@CurrentUser() u: AuthUser, @Query() q: any) {
-    return this.docs.list(u, { doc_type: q.doc_type, state: q.state, mine: q.mine === 'true' || q.mine === '1', limit: q.limit ? Number(q.limit) : undefined, cursor: q.cursor });
+    return this.docs.list(u, { doc_type: q.doc_type, state: q.state, q: q.q, mine: q.mine === 'true' || q.mine === '1', limit: q.limit ? Number(q.limit) : undefined, cursor: q.cursor });
   }
   @Get('documents/:id') get(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.docs.get(id, u); }
   @Patch('documents/:id') patch(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: any) { return this.docs.patch(id, u, b); }

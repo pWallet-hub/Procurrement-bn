@@ -9,6 +9,7 @@ export const GR06: TemplateDef = {
   description: 'Authorization request for activity support. Does not replace procurement procedures where thresholds or competitive sourcing apply.',
   schema: { sections: [
     { key: 'request', title: 'A. Request Information', fields: [
+      f.user('requested_by', 'Requested by', { ...req, help: 'The person requesting. Change it when you fill the form for someone else: they sign "Requested / Prepared by" after you submit.' }),
       f.text('project_activity', 'Project / Activity', req), f.budget('budget_line', 'Budget Line / Cost Centre', req),
       f.textarea('purpose_justification', 'Purpose / Justification', req),
     ] },
@@ -36,7 +37,7 @@ export const GR06: TemplateDef = {
     ] },
   ] },
   signature_slots: [
-    { key: 'prepared_by', label: 'Requested / Prepared by', role: 'requesting_staff', seq: 1, declaration: 'I confirm this request is accurate.', assign: 'creator' },
+    { key: 'prepared_by', label: 'Requested / Prepared by', role: 'requesting_staff', seq: 1, declaration: 'I confirm this request is accurate.', assign: 'requester:requested_by' },
     { key: 'accountant_budget_check', label: 'Accountant — Budget & Control Check', role: 'accountant', seq: 2, declaration: 'I checked the budget line.' },
     { key: 'director_activity_review', label: 'Manager of Department — Activity Reviewer', role: 'director_dept', seq: 3, declaration: 'I reviewed the activity.' },
     { key: 'pi_final_authorization', label: 'PI — Final Authorization', role: 'pi', seq: 4, declaration: 'I authorize this request.' },
@@ -52,7 +53,8 @@ export const IM08: TemplateDef = {
   schema: { sections: [
     { key: 'memo', title: 'A. Memo Originator', fields: [
       f.text('memo_reference_name', 'Memo Reference Name', req), f.text('department_office', 'Department/ Office', req),
-      f.date('date_submitted', 'Date Submitted', { readonly: true }), f.text('version', 'Version', { readonly: true, default: '1.0' }),
+      f.user('originator', 'Originating staff', { ...req, help: 'The staff member raising the memo. Change it when you write the memo for someone else: they sign it after you submit.' }),
+      f.date('date_submitted', 'Date Submitted', { ...req, default: 'today' }), f.text('version', 'Version', { readonly: true, default: '1.0' }),
     ] },
     { key: 'issue', title: 'B. Issue Requiring Attention', fields: [
       f.textarea('issue_description', 'Describe the issue, background, urgency, operational implication, and any relevant facts or supporting references', req),
@@ -73,7 +75,7 @@ export const IM08: TemplateDef = {
     ] },
   ] },
   signature_slots: [
-    { key: 'originating_staff', label: 'Originating Staff Signature', role: 'requesting_staff', seq: 1, declaration: 'I submit this memo.', assign: 'creator' },
+    { key: 'originating_staff', label: 'Originating Staff Signature', role: 'requesting_staff', seq: 1, declaration: 'I submit this memo.', assign: 'requester:originator' },
     { key: 'superior', label: 'Superior Staff', role: 'superior', seq: 2, declaration: 'This is my decision on the memo.' },
   ],
   workflow: { guards_on_submit: ['template_valid'], guards_on_sign: ['single_source_requires_justification', 'frozen_after_sign', 'no_duplicate_signature'], requires_conflict_confirmation: false,
@@ -127,7 +129,7 @@ export const TC10: TemplateDef = {
   schema: { sections: [
     { key: 'traveller', title: 'Traveller', fields: [
       f.radio('traveller_type', 'Traveller', ['Internal (AfS staff)', 'External'], { ...req, default: 'internal_afs_staff' }),
-      f.user('issued_to', 'Issued to Mr/Mrs/Ms', { required_if: internal, visible_if: internal }),
+      f.user('issued_to', 'Issued to Mr/Mrs/Ms', { required_if: internal, visible_if: internal, help: 'The staff member travelling. When it is not you, they sign the clearance as the traveller after you submit.' }),
       f.text('issued_to_name', 'Issued to Mr/Mrs/Ms (full name)', { required_if: external, visible_if: external, maxLength: 120 }),
       f.radio('id_type', 'ID type', ['Rwanda national ID', 'Passport'], req),
       f.text('id_number', 'ID', { ...req, maxLength: 30, check: { rule: 'id_document', type_field: 'id_type' }, help: 'Rwanda national ID: 16 digits. Passport: 6 to 9 letters or digits.' }),
@@ -157,7 +159,7 @@ export const TC10: TemplateDef = {
     ] },
   ] },
   signature_slots: [
-    { key: 'traveller', label: 'Traveller (requested by)', role: 'requesting_staff', seq: 1, declaration: 'I request this travel clearance and confirm the details are accurate.', assign: 'creator' },
+    { key: 'traveller', label: 'Traveller (requested by)', role: 'requesting_staff', seq: 1, declaration: 'I request this travel clearance and confirm the details are accurate.', assign: 'requester:issued_to' },
     { key: 'supervisor', label: 'Supervisor who proposed the mission', role: 'director_dept', seq: 2, declaration: 'I proposed this mission and confirm its purpose.', assign: 'field:supervisor' },
     { key: 'admin_costs', label: 'Costs entered by (Administrator)', role: 'admin', seq: 3, declaration: 'I entered the mission allowance, accommodation and transport costs (items 15 to 17).', draft_fill: true },
     { key: 'funding_check', label: 'Funding checked by (Accountant)', role: 'accountant', seq: 4, declaration: 'I checked the funding line and the amounts.' },
